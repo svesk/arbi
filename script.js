@@ -312,9 +312,9 @@ function renderDashboard(stats) {
     allIntervals.sort((a, b) => a - b);
     let median = allIntervals.length > 0 ? allIntervals[Math.floor(allIntervals.length / 2)] : 1.0;
 
-    // 2. Define "Drought Threshold" (Median * 3)
-    // Anything 3x longer than the median is considered a "Game Nap" / "Map Clear".
-    const THRESHOLD = Math.max(1.0, median * 3);
+    // 2. Define "Drought Threshold" (Median * 8)
+    // Anything 8x longer than the median is considered a "Game Nap" / "Map Clear".
+    const THRESHOLD = Math.max(1.0, median * 8);
 
     // 3. Build the Graph
     if (stats.liveCounts.length > 1) {
