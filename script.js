@@ -93,8 +93,6 @@ async function readAndCleanFile(file) {
         await new Promise(r => setTimeout(r, 0));
     }
 
-    // 2. THE OPTIMIZATION (Ported from Python)
-    // Find the LAST mission start to avoid processing old data
     const lastStartRegex = /Script \[Info\]: ThemedSquadOverlay\.lua: Mission name: (.*)/g;
     let match;
     let lastIndex = -1;
@@ -142,7 +140,6 @@ function analyzeLogData(text) {
     const p_overlay = /Script \[Info\]: ThemedSquadOverlay\.lua: Mission name: (.*)/;
     const p_agent = /OnAgentCreated/;
     const p_drone = /OnAgentCreated.*?CorpusEliteShieldDroneAgent/;
-    // Turret Filter (Matches Python logic exactly)
     const p_turret = /OnAgentCreated.*?(?:\/Npc\/)?AutoTurretAgentShipRemaster/; 
     
     const p_reward = /^(\d+\.\d+).*Sys \[Info\]: Created \/Lotus\/Interface\/DefenseReward\.swf/;
@@ -186,14 +183,8 @@ function analyzeLogData(text) {
                 current.droneTimestamps.push(timestamp);
                 current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
             }
-            // Note: Drones are technically "Agents", so we count them here,
-            // but usually we want "Enemy Spawns" to be non-drones? 
-            // The Python script counts them as both. 
-            // If you want "Non-Drone Enemies", use the else if below.
         }
         
-        // NEW: Track Enemies (excluding Drones and Turrets)
-        // This ensures "Total Enemies" is clean data.
         else if (p_agent.test(line)) {
             if (!p_turret.test(line)) {
                 current.enemySpawns++;
@@ -221,7 +212,6 @@ function analyzeLogData(text) {
             current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
         }
 
-// Track Live Counts (Cleaned: Live - AllyLive)
         // We capture both the Total Live count and the AllyLive count
         const p_liveComplex = /AI \[Info\]:.*?Live (\d+).*?AllyLive (\d+)/;
         const mLive = line.match(p_liveComplex);
@@ -230,7 +220,6 @@ function analyzeLogData(text) {
             let total = parseInt(mLive[1]);
             let allies = parseInt(mLive[2]);
             
-            // The Holy Grail: True Enemy Count
             let trueEnemies = Math.max(0, total - allies);
             
             current.liveCounts.push({ t: timestamp, val: trueEnemies });
