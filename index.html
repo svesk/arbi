@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warframe Arbitrations Analyzer</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+
+<div class="container">
+    <div style="width: 100%; display: flex; justify-content: flex-end; margin-bottom: -30px;">
+        <a href="leaderboard.html" class="btn" style="text-decoration: none; padding: 8px 16px; font-size: 0.8rem; background: #333; color: white; border: 1px solid #444;">View Leaderboard</a>
+    </div>
+
+    <div class="header-section" id="uploadSection">
+        <h1>Arbitration Runs Analyzer</h1>
+        <div class="subtitle">Made by @sves</div>
+
+        <div style="max-width: 650px; margin: 0 auto 30px auto; color: #aaa; line-height: 1.6; font-size: 0.95rem;">
+            <p>
+                This tool analyzes your Warframe <b>EE.log</b> file to return useful insight about your Arbitration efficiency. 
+                It tracks total drone kills, estimates expected Vitus Essence, gives each wave's clear speed,
+                and visualizes your map coverage.
+            </p>
+            
+            <div style="background: #252525; padding: 15px; border-radius: 8px; border-left: 3px solid #D3D3D3; margin: 20px 0; text-align: left; font-size: 0.9rem;">
+                <strong style="color: #e0e0e0;">Where is my EE.log?</strong><br>
+                Press Windows Key + R, enter: %localappdata%\Warframe, and you will see your EE.log file. 
+                The game automatically deletes your previous EE.log every time you open the game. For best results, restart your game before the arbitration and analyze right afterwards.
+            </div>
+
+            <div style="background: #252525; padding: 15px; border-radius: 8px; border-left: 3px solid #D3D3D3; margin: 20px 0; text-align: left; font-size: 0.9rem;">
+                <strong style="color: #e0e0e0;">Small Note:</strong><br>
+                In-game logs often miscount drone kills when against certain factions (around a ± 2-4% difference). For 100% precision, both DPS can count drone kills before and after the run using the browse.wf profile viewer.
+            </div>
+
+            <p style="font-size: 0.85rem; opacity: 0.7;">
+                (All processing is done locally in your browser. Your log files are never uploaded to any server.)
+            </p>
+        </div>
+
+        <div id="dropZone" class="drop-zone">
+            <span style="font-size: 40px;">📄</span><br><br>
+            <b>Drag & Drop EE.log file</b><br>
+            <span style="font-size: 13px; color: #888;">Make sure you upload the host's EE.log files.</span>
+        </div>
+        <input type="file" id="fileInput" style="display: none;" accept=".log,.txt">
+        <div id="loadingSpinner" class="spinner"></div>
+        <div id="status" class="status-text"></div>
+    </div>
+
+    <div id="dashboard" class="hidden">
+        
+        <div style="text-align: center; margin-bottom: 20px;">
+            <span id="missionBadge" class="mission-badge">DETECTING MISSION...</span>
+            <div id="missionNodeDisplay" style="color: #aaa; margin-top: 5px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase;"></div>
+        </div>
+
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label">Drones Killed (Log)</div>
+                <div class="kpi-value" id="kpiDrones">0</div>
+                
+                <div style="margin-top: 10px; border-top: 1px solid #444; padding-top: 10px;">
+                    <input type="number" id="manualDroneInput" placeholder="Manual Input" 
+                           style="background: #333; border: 1px solid #555; color: white; padding: 5px; border-radius: 4px; width: 80%; text-align: center;">
+
+                </div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-label">Avg Drone Interval</div>
+                <div class="kpi-value" id="kpiDroneInterval">0.00s</div>
+                <div class="kpi-sub">Avg. time between drone spawns</div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-label" id="kpiDurationLabel">Total Rounds</div>
+                <div class="kpi-value" id="kpiDuration">0</div>
+                <div class="kpi-sub">Rotation C count: Calculating...</div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col panel">
+                <div class="panel-title">Expected Vitus Probability</div>
+                <div class="panel-desc">Assuming 100% pickup rate, all buffs, and retriever mod active.</div>
+
+                <div style="margin: 15px 0; background: #252525; padding: 10px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center;">
+                        <label for="actualVitusInput" style="margin-right: 10px; font-size: 0.9rem; color: #ccc;">Actual Vitus:</label>
+                        <input type="number" id="actualVitusInput" placeholder="0" 
+                               style="width: 70px; padding: 5px; border-radius: 4px; border: 1px solid #444; background: #1a1a1a; color: #fff; text-align: center; font-weight: bold;">
+                    </div>
+                    <div id="luckResult" style="font-size: 0.9rem; font-weight: bold; color: #888;">
+                        Enter amount to see luck %
+                    </div>
+                </div>
+
+                <table id="vitusTable">
+                    <thead><tr><th>Chance</th><th>Total Vitus</th><th>Luck Level</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="col panel">
+                <div class="panel-title">Enemy Saturation (Live)</div>
+                <div class="panel-desc">Percent of time spent at different enemy counts.</div>
+                <div id="saturationBars"></div>
+            </div>
+        </div>
+
+        <div class="row" id="sectionWaveMap">
+            <div class="col panel">
+                <div class="panel-title">Wave Clear Map</div>
+                <div class="panel-desc">Heatmap of wave durations. Hover to see specific wave timer.</div>
+                <div class="wave-grid" id="waveGrid"></div>
+                <div style="margin-top: 15px; display: flex; gap: 15px; font-size: 0.8rem; justify-content: center;">
+                    <div style="display: flex; align-items: center; gap: 5px;"><div style="width:12px; height:12px; background:var(--success);"></div> Fast (<=35s)</div>
+                    <div style="display: flex; align-items: center; gap: 5px;"><div style="width:12px; height:12px; background:var(--danger);"></div> Slow (>35s)</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+             <div class="col panel">
+                <div class="panel-title">Simultaneous Drone Spawns</div>
+                <div class="panel-desc">Drones spawning within 0.1s of each other.</div>
+                <ul class="cumulative-list" id="packList"></ul>
+            </div>
+             <div class="col panel">
+                <div class="panel-title">Top 10 Slowest Drone Intervals</div>
+                <div class="panel-desc">Keep in mind that pre-mission and extraction screen timers count.</div>
+                <ul class="cumulative-list" id="slowestList"></ul>
+            </div>
+        </div>
+
+        <div style="text-align: center;">
+        <div id="actionButtons" style="text-align: center;">
+            <button class="btn" onclick="copyToClipboard()" style="background-color: #00e676; color: #121212; margin-right: 2px;">
+                Copy Image
+            </button>
+            <button class="btn" id="downloadBtn">Download Text Report</button>
+            <button class="btn" style="background:#444; color:white;" onclick="location.reload()">Reset</button>
+        </div>
+        <div style="height: 50px;"></div>
+    </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

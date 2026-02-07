@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Arbitration Leaderboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+    <div style="width: 100%; margin-bottom: 40px;">
+        <a href="./" class="btn" style="text-decoration: none; padding: 8px 16px; font-size: 0.8rem; background: #333; color: white; border: 1px solid #444;">← Back to Analyzer</a>
+    </div>
+
+    <div class="header-section">
+        <h1>Warframe Arbitrations Leaderboard</h1>
+        <div class="subtitle">Highest Vitus Yields per map for 102 waves or 10 rounds</div>
+        <div style="margin-top: 30px; font-size: 0.9rem; color: #919191;">
+            Want to submit a run? 
+            <a href="https://discord.gg/QuPv8baMnu" target="_blank" style="color: #4da6ff; text-decoration: underline; cursor: pointer;">
+                Join the Discord Server</a> 
+            and follow the instructions in #rules-of-submission.
+        </div>
+    </div>
+
+    <div class="panel">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 10%;">Rank</th>
+                    <th style="width: 25%;">Map Node</th>
+                    <th style="width: 50%;">Squad</th>
+                    <th style="width: 15%; text-align: right;">Vitus Essence</th>
+                </tr>
+            </thead>
+            <tbody id="leaderboardBody">
+                </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+
+    const matches = [
+        { map: "Alator", players: "arcLerris, EskordSosal, _SurvivaL_, Miyari", score: 1050 },
+        { map: "Callisto", players: "Ainikki, MrZockerator, seterino, hirschi69", score: 1011 },
+        { map: "Tyana Pass", players: "sves, Faceless-, Aztralad, Mia.", score: 886 },
+        { map: "Umbriel", players: "Ainikki, MrZockerator, Ogre, _SurvivaL_", score: 903 },
+        { map: "Cinxia", players: "Scorn2k, Dodolhead., Kerope, Quitegold929205", score: 860 },
+        { map: "Munio", players: "arcLerris, EskordSosal, Mia., Walkthrew", score: 820 },
+        { map: "Odin", players: "ITZ_Rubba, keymapperplus, Nowtmate, Miyari", score: 800 },
+        { map: "Mithra", players: "arcLerris, EskordSosal, Miyari, Mia.", score: 785 },
+        { map: "Ose", players: "arcLerris, EskordSosal, hirschi69, IHamudi", score: 745 },
+        { map: "Cytherean", players: "arcLerris, EskordSosal, legitj0hn, Miyari", score: 719 },
+        { map: "Lares", players: "BananoKotleciq, Stealable, GS Seiko, varunjoker", score: 689 },
+        { map: "Xini", players: "arcLerris, EskordSosal, Dispersion, DeMiGoD129", score: 690 },
+        { map: "Sechura", players: "Kuva_Generator, arcLerris, StaggyBaby, SneakyTV", score: 628 },
+        { map: "Seimeni", players: "Jtangood, dpstest, NyanGar, Delizzz", score: 611 },
+        { map: "Hyf", players: "Darkking-killer, SEIKO5, Mia., Nowtmate", score: 607 },
+        { map: "Casta", players: "Miyari, Mia., _SurvivaL_, Turbozis", score: 611 },
+        { map: "Akkad", players: "llSoulsLikell, legitj0hn, zParca, Sleepy.", score: 605 },
+        { map: "Stephano", players: "Kuva_Generator, Ainikki, Detroit91, MCXXCLV", score: 586 },
+        { map: "Helene", players: "Ainikki, MrZockerator, GS Seiko, Ogre", score: 582 },
+        { map: "Tessera", players: "Scorn2k, pinko., Banditjoe2, --SA--War.Okami", score: 582 },
+        { map: "Oestrus", players: "arcLerris, EskordSosal, 41Numbers, legitj0hn", score: 581 },
+        { map: "Belenus", players: "Kuva_Generator, -PK- Meowington, StaggyBaby, Sycuh", score: 580 },
+        { map: "Hydron", players: "arcLerris, EskordSosal, llSoulsLikell, Grendel_Enjoyer", score: 579 },
+        { map: "Paimon", players: "Jtangood, Violet_Snake, dpstest, MrJostphe", score: 577 },
+        { map: "Larzac", players: "dpstest, Jtangood, Sleepy., Mia.", score: 570 },
+        { map: "Kadesh", players: "Darkking-killer, Jtangood, Mia., Geek", score: 570 },
+        { map: "Outer Terminus", players: "llSoulsLikell, legitj0hn, XxXAloucardXxX, -PK- Meowington", score: 557 },
+        { map: "Coba", players: "Scorn2k, ekjsvv, legitj0hn, ssf2345", score: 540 },
+        { map: "Gaia", players: "arcLerris, EskordSosal, llSoulsLikell, hirschi69", score: 514 },
+        { map: "Taranis", players: "Meowington, ZiggyThief, Crash3Bandicoot3, Ssskipsss", score: 506 },
+        { map: "Rhea", players: "Ftiras, F5rPrime, RIVEN_collector, -Citrine_Prime-", score: 472 },
+    ];
+
+    function renderLeaderboard() {
+        const tbody = document.getElementById('leaderboardBody');
+        
+        matches.sort((a, b) => b.score - a.score);
+
+        let html = "";
+        matches.forEach((match, index) => {
+            let rankColor = "#545454"; 
+            let rowBg = "";
+            let rankText = `#${index + 1}`;
+
+            if (index === 0) { rankColor = "#FFD700"; rankText = "#1"; } // Gold
+            if (index === 1) { rankColor = "#C0C0C0"; rankText = "#2"; } // Silver
+            if (index === 2) { rankColor = "#CD7F32"; rankText = "#3"; } // Bronze
+
+            html += `
+            <tr style="${rowBg}">
+                <td style="color: ${rankColor}; font-weight: bold; font-size: 1.1rem;">${rankText}</td>
+                <td style="font-weight: bold; color: var(--text-main);">${match.map}</td>
+                <td style="color: var(--text-muted); font-size: 0.9rem;">${match.players}</td>
+                <td style="text-align: right; color: var(--primary); font-weight: bold; font-size: 1.1rem;">${match.score}</td>
+            </tr>
+            `;
+        });
+
+        tbody.innerHTML = html;
+    }
+    renderLeaderboard();
+</script>
+
+</body>
+
+</html>
+
+
+
+
+
+
+
+
+
+

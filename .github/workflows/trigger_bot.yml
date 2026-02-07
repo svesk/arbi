@@ -1,0 +1,17 @@
+name: Signal Private Bot
+
+on:
+  push:
+    paths:
+      - 'leaderboard.html'
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire the Bat-Signal
+        run: |
+          curl -X POST https://api.github.com/repos/svesk/arbi-embed/dispatches \
+          -H 'Accept: application/vnd.github.everest-preview+json' \
+          -u ${{ secrets.PA_TOKEN }} \
+          --data '{"event_type": "update_leaderboard"}'
