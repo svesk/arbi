@@ -1,4 +1,5 @@
 // --- CONSTANTS ---
+let currentSaturationSegments = [];
 const DROP_CHANCE = 0.15;
 const RETRIEVER_CHANCE = 0.18;
 const SCENARIOS = [
@@ -20,6 +21,7 @@ const dashboard = document.getElementById('dashboard');
 const uploadSection = document.getElementById('uploadSection');
 const downloadBtn = document.getElementById('downloadBtn');
 const sectionWaveMap = document.getElementById('sectionWaveMap');
+const waveMapPanel = document.getElementById('waveMapPanel');
 const missionBadge = document.getElementById('missionBadge');
 
 let inputFileName = "EE.log";
@@ -290,18 +292,20 @@ function analyzeLogData(text) {
 
 // --- RENDER ---
 function renderDashboard(stats) {
+    // Reset saturation segments for each new file to avoid leaking previous data
+    currentSaturationSegments = [];
     document.getElementById('missionNodeDisplay').textContent = stats.missionName;
 
     if (stats.isDefense) {
         missionBadge.textContent = "DEFENSE MISSION";
         missionBadge.style.background = "#ffaa00";
         missionBadge.style.color = "#000";
-        sectionWaveMap.classList.remove('hidden');
+        if (waveMapPanel) waveMapPanel.classList.remove('hidden');
     } else {
         missionBadge.textContent = "INTERCEPTION MISSION";
         missionBadge.style.background = "#ffaa00";
         missionBadge.style.color = "#000";
-        sectionWaveMap.classList.add('hidden');
+        if (waveMapPanel) waveMapPanel.classList.add('hidden');
     }
 
     // KPI: Drones & Manual Input
@@ -359,59 +363,85 @@ function renderDashboard(stats) {
     // 2. Define "Drought Threshold"
     const THRESHOLD = Math.max(1.0, median * 8);
 
-    // 3. Build Graph
+    // 3. Build Graph (Adaptive Resolution)
     if (stats.liveCounts.length > 1) {
+
+        // A. DETERMINE RESOLUTION
+        // Defense/Interception: Cap is ~30. We use Step 3 for "High Def" (0-2, 3-5, ... 27-29) -> ~10 Bars
+        // Survival: Cap is ~50+. We use Step 5 for "Wide Range" (0-4, 5-9, ... 50+) -> ~11 Bars
+        let step = (stats.isDefense || stats.isInterception) ? 3 : 5;
+        let maxVal = (stats.isDefense || stats.isInterception) ? 30 : 55;
+        let numBuckets = Math.ceil(maxVal / step);
+
+        let buckets = new Array(numBuckets).fill(0);
+        let totalTime = 0;
+
+        // B. FILL BUCKETS
         for (let i = 0; i < stats.liveCounts.length - 1; i++) {
             let current = stats.liveCounts[i];
             let next = stats.liveCounts[i + 1];
             let duration = next.t - current.t;
 
-            if (duration > 60) continue; 
+            if (duration > 60) continue;
 
-            // --- Pause Filter ---
+            // Pause Filter
             let isPaused = false;
             if (stats.pauseIntervals) {
                 for (let pause of stats.pauseIntervals) {
                     if ((current.t < pause.start && next.t > pause.end) ||
                         (current.t >= pause.start && current.t < pause.end)) {
-                        isPaused = true;
-                        break;
+                        isPaused = true; break;
                     }
                 }
             }
             if (isPaused) continue;
-            // ---------------------------
 
-            let bucketIndex = current.val >= 50 ? 10 : Math.floor(current.val / 5);
+            // Dynamic Index Calculation
+            let bucketIndex = Math.floor(current.val / step);
+            if (bucketIndex >= numBuckets - 1) bucketIndex = numBuckets - 1; // Clamp to top bucket
 
-
+            // SATURATION LOGIC & DATA CAPTURE
             if (stats.isDefense || stats.isInterception) {
+                // Defense/Interception: Trust the count
                 buckets[bucketIndex] += duration;
                 totalTime += duration;
+
+                // NEW: Save for Slider
+                currentSaturationSegments.push({ val: current.val, dur: duration });
             }
             else {
-
+                // Survival: Split into Active vs Drought
                 if (duration > THRESHOLD) {
                     buckets[bucketIndex] += THRESHOLD;
                     totalTime += THRESHOLD;
+                    currentSaturationSegments.push({ val: current.val, dur: THRESHOLD });
 
                     let drought = duration - THRESHOLD;
                     buckets[0] += drought;
                     totalTime += drought;
+                    currentSaturationSegments.push({ val: 0, dur: drought });
                 } else {
                     buckets[bucketIndex] += duration;
                     totalTime += duration;
+                    currentSaturationSegments.push({ val: current.val, dur: duration });
                 }
             }
+            updateThresholdStat();
         }
 
-        // Render the bars
+        // C. RENDER BARS (With Adaptive Labels & Gradient)
         buckets.forEach((duration, i) => {
-            let label = (i === 10) ? "50+" : `${i * 5}-${(i * 5) + 4}`;
-            let pct = totalTime > 0 ? (duration / totalTime * 100).toFixed(1) : "0.0";
-            let hue = Math.max(0, 100 - (i * 40));
+            let start = i * step;
+            let end = (i * step) + (step - 1);
+            let label = (i === numBuckets - 1) ? `${start}+` : `${start}-${end}`;
 
-            let lightness = (i > 4) ? "40%" : "50%";
+            let pct = totalTime > 0 ? (duration / totalTime * 100).toFixed(1) : "0.0";
+
+            let hueStart = 100;
+            let hueStep = (stats.isDefense || stats.isInterception) ? 15 : 25;
+            let hue = Math.max(0, hueStart - (i * hueStep));
+
+            let lightness = (hue === 0 && i > (numBuckets / 2)) ? "45%" : "50%";
 
             barHTML += `
             <div class="bar-container">
@@ -462,10 +492,17 @@ function renderDashboard(stats) {
         // 1. Calculate DPM
         let dataPoints = [];
         if (stats.rewardTimestamps && stats.rewardTimestamps.length > 0) {
-            let startTime = stats.droneTimestamps[0];
-            if (stats.startTime) startTime = stats.startTime; 
+            // SAFETY: Resolve a reliable start time even when logs miss timestamps
+            let startTime = 0;
+            if (stats.preciseStartTime) {
+                startTime = stats.preciseStartTime;
+            } else if (stats.droneTimestamps && stats.droneTimestamps.length > 0) {
+                startTime = stats.droneTimestamps[0];
+            } else {
+                startTime = stats.lastActivityTime ? (stats.lastActivityTime - (stats.rounds * 300)) : 0;
+            }
 
-            const totalDuration = stats.lastActivityTime - startTime;
+            const totalDuration = Math.max(1, (stats.lastActivityTime || 0) - startTime);
             const minutes = Math.max(0.1, totalDuration / 60);
             let dIdx = 0;
 
@@ -557,7 +594,7 @@ function renderDashboard(stats) {
             });
 
             graphEl.outerHTML = `
-                <div id="packList" style="width:100%; height:260px; margin-top:10px; position:relative;">
+                <div id="packList" style="width:100%; margin-top:10px; position:relative; flex: 1; display: flex; flex-direction: column;">
                     <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:100%; overflow:visible; font-size:10px; font-family:monospace;">
                         <g transform="translate(${margin.left}, ${margin.top})">
                             ${yGridHTML}
@@ -895,6 +932,56 @@ async function copyToClipboard() {
                     `;
                     vitusInput.parentNode.replaceChild(box, vitusInput);
                 }
+
+                // 3. Handle SATURATION INPUT - Clean Visual for Screenshot
+                const saturationContainer = clonedDoc.getElementById('saturationStatContainer');
+                const saturationInput = clonedDoc.getElementById('saturationThreshold');
+                const resultText = clonedDoc.getElementById('thresholdResult');
+
+                if (saturationContainer && saturationInput && resultText) {
+                    const val = saturationInput.value || 15;
+                    const pctText = resultText.innerText;
+                    
+                    const cleanBox = clonedDoc.createElement("div");
+                    
+                    cleanBox.style.cssText = `
+                        margin-top: 15px;
+                        padding: 12px;
+                        background: rgba(255, 255, 255, 0.05);
+                        border-radius: 4px;
+                        border: 1px solid #444;
+                        font-family: 'Inter', sans-serif;
+                    `;
+                    
+                    const gradientColor = getGradientColor(parseFloat(pctText.replace('%', '')));
+                    cleanBox.innerHTML = `
+                        <div style="color: #ccc; font-size: 0.85rem; margin-bottom: 5px;">
+                            % of total time spent with <b style="color:#fff;">${val}</b> or more enemies alive:
+                        </div>
+                        <div style="color: #ccc; font-weight: bold; font-size: 1.6rem;">
+                            <span style="color: ${gradientColor};">${pctText}</span>
+                        </div>
+                    `;
+                    
+                    saturationContainer.parentNode.replaceChild(cleanBox, saturationContainer);
+                }
+
+                // Add watermark at bottom
+                const watermark = clonedDoc.createElement("div");
+                watermark.style.cssText = `
+                    text-align: center;
+                    color: #7a7a7a;
+                    font-size: 1.1rem;
+                    margin-top: 2px;
+                    margin-bottom: 20px;
+                    padding-top: 1px;
+                    padding-bottom: 12px;
+                    border-top: 1px solid #333;
+                    opacity: 0.9;
+                    line-height: 1.9;
+                `;
+                watermark.innerHTML = "Made by @sves<br>https://svesk.github.io/arbi/";
+                clonedDoc.getElementById("dashboard").appendChild(watermark);
             }
         });
 
@@ -927,6 +1014,16 @@ function getNormalCDF(x, mean, std) {
     return p;
 }
 
+// Helper function to get color gradient from green (0%) to red (50%)
+function getGradientColor(percent) {
+    // Clamp percent between 0 and 100
+    percent = Math.max(0, Math.min(100, percent));
+    
+    // Hue goes from 120 (green) to 0 (red) on the HSL wheel, reaching red at 50%
+    const hue = Math.max(0, 120 - (percent / 18) * 120);
+    return `hsl(${hue}, 100%, 50%)`;
+}
+
 const actualInput = document.getElementById('actualVitusInput');
 if (actualInput) {
     actualInput.oninput = () => {
@@ -945,3 +1042,38 @@ if (actualInput) {
         updateVitusTable(activeDroneCount, currentStats.rounds);
     };
 }
+
+// --- NEW FEATURE: Saturation Threshold Logic ---
+function updateThresholdStat() {
+    const thresholdResult = document.getElementById('thresholdResult');
+
+    // Safety Check
+    if (!currentSaturationSegments || currentSaturationSegments.length === 0) {
+        if (thresholdResult) thresholdResult.textContent = "--%";
+        return;
+    }
+
+    // Always use 15 as the limit
+    const limit = 15;
+
+    // 3. Calculate % time above limit
+    let totalDur = 0;
+    let aboveDur = 0;
+
+    for (let seg of currentSaturationSegments) {
+        totalDur += seg.dur;
+        if (seg.val >= limit) {
+            aboveDur += seg.dur;
+        }
+    }
+
+    // 4. Update Result
+    let pct = totalDur > 0 ? (aboveDur / totalDur * 100).toFixed(1) : "0.0";
+
+    if (thresholdResult) {
+        thresholdResult.textContent = `${pct}%`;
+        thresholdResult.style.color = getGradientColor(parseFloat(pct));
+    }
+}
+
+// Call updateThresholdStat when needed (no event listener since input is removed)

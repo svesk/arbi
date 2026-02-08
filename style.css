@@ -23,8 +23,22 @@ body {
 
 .container { max-width: 1000px; width: 100%; }
 .hidden { display: none !important; }
-.row { display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
-.col { flex: 1; min-width: 300px; }
+
+/* UPDATED: Strict Grid Alignment */
+.row { 
+    display: flex; 
+    gap: 20px; 
+    margin-bottom: 20px; 
+    flex-wrap: wrap;
+    align-items: stretch; /* Forces all columns in a row to match the tallest one */
+}
+
+.col { 
+    flex: 1; 
+    min-width: 300px; 
+    display: flex; 
+    flex-direction: column; 
+}
 
 /* HEADER */
 .header-section { text-align: center; margin-bottom: 40px; }
@@ -58,7 +72,19 @@ h1 { color: var(--primary); margin: 0; font-size: 2.5rem; letter-spacing: 1px; }
 .drop-zone.dragover { border-color: var(--success); background: #2a3a2a; }
 .status-text { font-family: monospace; color: var(--success); margin-top: 10px; min-height: 20px; }
 
-.panel { background: var(--bg-panel); border-radius: 12px; padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); border: 1px solid #333; }
+.panel { 
+    background: var(--bg-panel); 
+    border-radius: 12px; 
+    padding: 20px; 
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3); 
+    border: 1px solid #333; 
+    
+    /* These lines ensure the panel fills the entire height of the column */
+    flex: 1;
+    display: flex; 
+    flex-direction: column;
+    box-sizing: border-box; 
+}
 .panel-title { font-size: 1.1rem; color: var(--text-muted); margin-bottom: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #333; padding-bottom: 10px; }
 .panel-desc { font-size: 0.85rem; color: #888; margin-top: -10px; margin-bottom: 15px; line-height: 1.4; }
 
@@ -135,4 +161,56 @@ input[type=number]::-webkit-outer-spin-button {
 input[type=number] {
   appearance: textfield;      
   -moz-appearance: textfield; 
+}
+
+/* Force the button container to be centered (fallback if layout breaks) */
+.results-section .action-buttons,
+#resultsSection > div:last-child {
+        display: flex;
+        justify-content: center;
+        gap: 15px;
+        margin-top: 20px;
+}
+
+/* Ensure the primary action buttons container stays centered */
+#actionButtons { display:flex; justify-content:center; gap:12px; align-items:center; width:100%; }
+
+/* Make SVG and list containers grow to fill panel space */
+#packList {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+#packList svg {
+    flex: 1;
+    min-height: 0;
+}
+
+#slowestList,
+#waveGrid,
+#saturationBars {
+    flex: 1;
+    min-height: 0;
+}
+
+/* Ensure table grows within panel */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-top: 5px;
+    flex: 1;
+}
+
+/* Make any content div inside panel (not title/desc) grow to fill space */
+.panel > *:not(.panel-title):not(.panel-desc) {
+    min-height: 0;
+}
+
+.panel > div:has(> ul),
+.panel > ul {
+    flex: 1;
+    min-height: 0;
 }
