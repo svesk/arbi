@@ -5,10 +5,10 @@ const SCENARIOS = [
     { z: -2.326, prob: "99%", desc: "Worst Case" },
     { z: -1.282, prob: "90%", desc: "Unlucky" },
     { z: -0.674, prob: "75%", desc: "Below Avg" },
-    { z: 0.000,  prob: "50%", desc: "Average" },
-    { z: 0.674,  prob: "25%", desc: "Above Avg" },
-    { z: 1.282,  prob: "10%", desc: "High Roll" },
-    { z: 2.326,  prob: " 1%", desc: "God Roll" }
+    { z: 0.000, prob: "50%", desc: "Average" },
+    { z: 0.674, prob: "25%", desc: "Above Avg" },
+    { z: 1.282, prob: "10%", desc: "High Roll" },
+    { z: 2.326, prob: " 1%", desc: "God Roll" }
 ];
 
 // --- UI ELEMENTS ---
@@ -23,7 +23,7 @@ const sectionWaveMap = document.getElementById('sectionWaveMap');
 const missionBadge = document.getElementById('missionBadge');
 
 let inputFileName = "EE.log";
-let currentStats = null; 
+let currentStats = null;
 
 // --- EVENTS ---
 dropZone.onclick = () => fileInput.click();
@@ -41,13 +41,13 @@ async function processFile(file) {
     inputFileName = file.name.replace(/\.[^/.]+$/, "");
     spinner.style.display = 'block';
     dropZone.style.display = 'none';
-    
+
     try {
         const text = await readAndCleanFile(file);
         const stats = analyzeLogData(text);
         currentStats = stats;
         renderDashboard(stats);
-        
+
         dashboard.classList.remove('hidden');
         spinner.style.display = 'none';
         statusDiv.textContent = "";
@@ -68,13 +68,13 @@ async function readAndCleanFile(file) {
     const CHUNK_SIZE = 1024 * 1024 * 10; // Read 10MB chunks
     const SPAM = ["Game [Warning]:", "DamagePct exceeds limits"]; // Lines to strip
     let offset = 0, fullContent = "", leftover = "";
-    
+
     // 1. Read the file
     while (offset < file.size) {
         const slice = file.slice(offset, offset + CHUNK_SIZE);
         const text = await slice.text();
         const currentData = leftover + text;
-        
+
         let lastIdx = currentData.lastIndexOf('\n');
         let chunk = lastIdx !== -1 && (offset + CHUNK_SIZE < file.size) ? currentData.substring(0, lastIdx) : currentData;
         leftover = lastIdx !== -1 && (offset + CHUNK_SIZE < file.size) ? currentData.substring(lastIdx + 1) : "";
@@ -82,13 +82,13 @@ async function readAndCleanFile(file) {
         const lines = chunk.split('\n');
         for (let line of lines) {
             let isSpam = false;
-            for(let s of SPAM) if(line.includes(s)) { isSpam=true; break; }
+            for (let s of SPAM) if (line.includes(s)) { isSpam = true; break; }
             if (!isSpam) fullContent += line + '\n';
         }
         offset += CHUNK_SIZE;
-        
+
         // Progress Bar
-        let pct = Math.min(100, (offset/file.size)*100).toFixed(0);
+        let pct = Math.min(100, (offset / file.size) * 100).toFixed(0);
         statusDiv.textContent = `Reading... ${pct}%`;
         await new Promise(r => setTimeout(r, 0));
     }
@@ -115,23 +115,29 @@ async function readAndCleanFile(file) {
 }
 
 // --- ANALYZER ---
+
 function analyzeLogData(text) {
     const lines = text.split(/\r?\n/);
     let sessions = [];
 
     const createStats = () => ({
         droneKills: 0,
-        enemySpawns: 0, // NEW: Track total enemies
+        enemySpawns: 0,
         rounds: 0,
         isDefense: false,
+        isInterception: false,
         droneTimestamps: [],
         rewardTimestamps: [],
         waveStarts: {},
         liveCounts: [],
+        pauseIntervals: [],
         lastRewardTime: 0,
         missionName: "Unknown Node",
         hasData: false,
-        lastActivityTime: 0 
+        lastActivityTime: 0,
+        currentPauseStart: null,
+        currentSimCap: 32,
+        preciseStartTime: null
     });
 
     let current = createStats();
@@ -140,42 +146,110 @@ function analyzeLogData(text) {
     const p_overlay = /Script \[Info\]: ThemedSquadOverlay\.lua: Mission name: (.*)/;
     const p_agent = /OnAgentCreated/;
     const p_drone = /OnAgentCreated.*?CorpusEliteShieldDroneAgent/;
-    const p_turret = /OnAgentCreated.*?(?:\/Npc\/)?AutoTurretAgentShipRemaster/; 
-    
-    const p_reward = /^(\d+\.\d+).*Sys \[Info\]: Created \/Lotus\/Interface\/DefenseReward\.swf/;
+    const p_turret = /OnAgentCreated.*?(?:\/Npc\/)?AutoTurretAgentShipRemaster/;
+
+    // Mode Triggers
+    const p_reward_def = /Sys \[Info\]: Created \/Lotus\/Interface\/DefenseReward\.swf/;
+    const p_reward_surv = /Sys \[Info\]: Created \/Lotus\/Interface\/SurvivalReward\.swf/;
+
+    // Pause Triggers
+    const p_sleep = /WaveDefend\.lua: _SleepBetweenWaves/;
+    const p_waveStart = /WaveDefend\.lua: Starting wave (\d+)/;
+    const p_interception_start = /Script \[Info\]: TerritoryMission\.lua/;
+
+    // NEW: Defense Capacity Logic
+    const p_waveCap = /WaveDefend\.lua: Starting wave \d+.*?\((\d+) simultaneous/;
+    const p_monitored = /AI \[Info\]: .*?MonitoredTicking (\d+)/;
+
     const p_defWave = /WaveDefend\.lua: Defense wave: 1/;
-    const p_waveLine = /^(\d+\.\d+).*Script \[Info\]: WaveDefend\.lua: Starting wave (\d+)/;
-    const p_waveDef = /^(\d+\.\d+).*WaveDefend\.lua: Defense wave: (\d+)/; 
-    const p_live = /AI \[Info\]:.*?Live (\d+)/;
+    const p_waveDef = /^(\d+\.\d+).*WaveDefend\.lua: Defense wave: (\d+)/;
     const p_timestamp = /^(\d+\.\d+)/;
+    const p_liveComplex = /AI \[Info\]:.*?Live (\d+).*?AllyLive (\d+)/;
 
     for (let line of lines) {
-        // 1. Get Timestamp
         let timestamp = 0;
         const tsMatch = line.match(p_timestamp);
         if (tsMatch) timestamp = parseFloat(tsMatch[1]);
 
-        // 2. MISSION START (ThemedSquadOverlay)
+        // 1. Mission Start
         const mMission = line.match(p_overlay);
         if (mMission) {
             let name = mMission[1].trim();
             if (name.includes("Arbitration")) {
                 if (timestamp > 0 && current.lastActivityTime > 0 && timestamp < current.lastActivityTime) {
-                    continue; 
+                    continue;
                 }
-                if (current.hasData || current.missionName !== "Unknown Node") {
-                    sessions.push(current);
-                }
+                if (current.hasData || current.missionName !== "Unknown Node") sessions.push(current);
                 current = createStats();
                 current.missionName = name.replace("Arbitration:", "").trim();
                 if (timestamp) current.lastActivityTime = timestamp;
             }
-            continue; 
+            continue;
         }
 
-        // 3. GAMEPLAY DATA
-        
-        // Track Drones
+        // 2. Pause Logic
+        if (p_sleep.test(line) || p_reward_def.test(line)) {
+            if (current.currentPauseStart === null && timestamp > 0) current.currentPauseStart = timestamp;
+        }
+        let isUnpause = false;
+        if (current.isDefense && p_waveStart.test(line)) isUnpause = true;
+        if (p_interception_start.test(line)) { current.isInterception = true; isUnpause = true; }
+
+        if (isUnpause && current.currentPauseStart !== null && timestamp > 0) {
+            current.pauseIntervals.push({ start: current.currentPauseStart, end: timestamp });
+            current.currentPauseStart = null;
+        }
+
+        const p_defStart1 = /WaveDefend\.lua: Defense wave: 1/;
+        const p_intStartInit = /Script \[Info\]: TerritoryMission\.lua: .*?(?:control|captured|Control|Captured)/;
+
+        if (current.preciseStartTime === null) {
+            if (p_defStart1.test(line)) {
+                current.preciseStartTime = timestamp;
+            }
+            else if (p_intStartInit.test(line)) {
+                current.preciseStartTime = timestamp;
+                current.isInterception = true;
+            }
+        }
+
+        // 3. Round Counting
+        let isRoundEvent = false;
+        if (current.missionName.includes("Survival")) {
+            if (p_reward_surv.test(line)) isRoundEvent = true;
+        } else {
+            if (p_reward_def.test(line)) isRoundEvent = true;
+        }
+        if (isRoundEvent) {
+            if (timestamp - current.lastRewardTime > 30) {
+                current.rounds++;
+                current.hasData = true;
+                current.lastRewardTime = timestamp;
+                current.rewardTimestamps.push(timestamp);
+                current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
+                if (current.currentPauseStart === null) current.currentPauseStart = timestamp;
+            }
+        }
+
+        const mCap = line.match(p_waveCap);
+        if (mCap) current.currentSimCap = parseInt(mCap[1]);
+
+        let dataPoint = null;
+        const mMonitored = line.match(p_monitored);
+
+        if ((current.isDefense || current.isInterception) && mMonitored) {
+            dataPoint = { t: timestamp, val: parseInt(mMonitored[1]), cap: current.currentSimCap };
+        } else if (!current.isDefense && !current.isInterception) {
+            const mLive = line.match(p_liveComplex);
+            if (mLive) {
+                let total = parseInt(mLive[1]);
+                let allies = parseInt(mLive[2]);
+                dataPoint = { t: timestamp, val: Math.max(0, total - allies) };
+            }
+        }
+        if (dataPoint && timestamp) current.liveCounts.push(dataPoint);
+
+        // 5. Gameplay Data
         if (p_drone.test(line)) {
             current.droneKills++;
             current.hasData = true;
@@ -183,60 +257,30 @@ function analyzeLogData(text) {
                 current.droneTimestamps.push(timestamp);
                 current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
             }
-        }
-        
-        else if (p_agent.test(line)) {
-            if (!p_turret.test(line)) {
-                current.enemySpawns++;
-            }
+        } else if (p_agent.test(line)) {
+            if (!p_turret.test(line)) current.enemySpawns++;
         }
 
-        // Track Rewards
-        const mReward = line.match(p_reward);
-        if (mReward) {
-            current.rounds++;
-            current.hasData = true;
-            if (timestamp) {
-                current.lastRewardTime = timestamp;
-                current.rewardTimestamps.push(timestamp);
-                current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
-            }
-        }
-
-        // Track Waves
         if (p_defWave.test(line)) current.isDefense = true;
-        let mWave = line.match(p_waveLine);
-        if (!mWave) mWave = line.match(p_waveDef);
+        let mWave = line.match(p_waveDef);
         if (mWave && timestamp) {
             current.waveStarts[parseInt(mWave[2])] = timestamp;
             current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
         }
-
-        // We capture both the Total Live count and the AllyLive count
-        const p_liveComplex = /AI \[Info\]:.*?Live (\d+).*?AllyLive (\d+)/;
-        const mLive = line.match(p_liveComplex);
-        
-        if (mLive && timestamp) {
-            let total = parseInt(mLive[1]);
-            let allies = parseInt(mLive[2]);
-            
-            let trueEnemies = Math.max(0, total - allies);
-            
-            current.liveCounts.push({ t: timestamp, val: trueEnemies });
-        }
     }
 
-    if (current.hasData || current.missionName !== "Unknown Node") {
-        sessions.push(current);
-    }
+    if (current.hasData || current.missionName !== "Unknown Node") sessions.push(current);
 
-    // Filter Best Session
     let bestSession = null;
     for (let i = sessions.length - 1; i >= 0; i--) {
         const s = sessions[i];
-        if (s.rounds > 0 && s.droneKills > 20) {
-            bestSession = s;
-            break; 
+        if (s.rounds > 0 && s.droneKills > 20) { bestSession = s; break; }
+    }
+
+
+    if (bestSession && bestSession.preciseStartTime !== null) {
+        if (bestSession.droneTimestamps.length > 0) {
+            bestSession.startTime = bestSession.preciseStartTime;
         }
     }
 
@@ -247,7 +291,7 @@ function analyzeLogData(text) {
 // --- RENDER ---
 function renderDashboard(stats) {
     document.getElementById('missionNodeDisplay').textContent = stats.missionName;
-    
+
     if (stats.isDefense) {
         missionBadge.textContent = "DEFENSE MISSION";
         missionBadge.style.background = "#ffaa00";
@@ -262,9 +306,9 @@ function renderDashboard(stats) {
 
     // KPI: Drones & Manual Input
     document.getElementById('kpiDrones').textContent = stats.droneKills.toLocaleString();
-    
+
     const manualInput = document.getElementById('manualDroneInput');
-    manualInput.value = ""; 
+    manualInput.value = "";
     manualInput.oninput = () => {
         const val = parseInt(manualInput.value);
         const countToUse = (isNaN(val) || val < 0) ? stats.droneKills : val;
@@ -275,7 +319,7 @@ function renderDashboard(stats) {
     let intervals = [];
     if (stats.droneTimestamps.length > 1) {
         for (let i = 1; i < stats.droneTimestamps.length; i++) {
-            intervals.push(stats.droneTimestamps[i] - stats.droneTimestamps[i-1]);
+            intervals.push(stats.droneTimestamps[i] - stats.droneTimestamps[i - 1]);
         }
         const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
         document.getElementById('kpiDroneInterval').textContent = avgInterval.toFixed(2) + "s";
@@ -295,63 +339,91 @@ function renderDashboard(stats) {
     }
 
     updateVitusTable(stats.droneKills, stats.rounds);
-// --- Saturation (Dynamic Anomaly Detection) ---
+
+    // --- Saturation (Dynamic Anomaly + Pause Filter + Capacity Logic V2) ---
     let barHTML = "";
     let buckets = new Array(11).fill(0);
     let totalTime = 0;
 
-    // 1. Calculate the Mission's "Heartbeat" (Median Interval)
-    // This finds the standard spawn rate for THIS specific run.
+    // 1. Calculate Mission "Heartbeat" (Median Interval)
     let allIntervals = [];
     if (stats.liveCounts.length > 1) {
         for (let i = 0; i < stats.liveCounts.length - 1; i++) {
-            let diff = stats.liveCounts[i+1].t - stats.liveCounts[i].t;
-            if (diff < 30) allIntervals.push(diff); // Filter massive outliers
+            let diff = stats.liveCounts[i + 1].t - stats.liveCounts[i].t;
+            if (diff < 30) allIntervals.push(diff);
         }
     }
     allIntervals.sort((a, b) => a - b);
     let median = allIntervals.length > 0 ? allIntervals[Math.floor(allIntervals.length / 2)] : 1.0;
 
-    // 2. Define "Drought Threshold" (Median * 3)
-    // Anything 3x longer than the median is considered a "Game Nap" / "Map Clear".
-    const THRESHOLD = Math.max(1.0, median * 3);
+    // 2. Define "Drought Threshold"
+    const THRESHOLD = Math.max(1.0, median * 8);
 
-    // 3. Build the Graph
+    // 3. Build Graph
     if (stats.liveCounts.length > 1) {
         for (let i = 0; i < stats.liveCounts.length - 1; i++) {
             let current = stats.liveCounts[i];
-            let next = stats.liveCounts[i+1];
+            let next = stats.liveCounts[i + 1];
             let duration = next.t - current.t;
-            
-            if (duration > 60) continue; // Ignore pauses
+
+            if (duration > 60) continue; 
+
+            // --- Pause Filter ---
+            let isPaused = false;
+            if (stats.pauseIntervals) {
+                for (let pause of stats.pauseIntervals) {
+                    if ((current.t < pause.start && next.t > pause.end) ||
+                        (current.t >= pause.start && current.t < pause.end)) {
+                        isPaused = true;
+                        break;
+                    }
+                }
+            }
+            if (isPaused) continue;
+            // ---------------------------
 
             let bucketIndex = current.val >= 50 ? 10 : Math.floor(current.val / 5);
 
-            if (duration > THRESHOLD) {
-                // Game went silent longer than expected.
-                // Credit active time up to the threshold...
-                buckets[bucketIndex] += THRESHOLD;
-                totalTime += THRESHOLD;
 
-                // ...and mark the rest as "Spawn Drought" (Bucket 0)
-                let droughtDuration = duration - THRESHOLD;
-                buckets[0] += droughtDuration; 
-                totalTime += droughtDuration;
-            } else {
-                // Normal gap. Map remained saturated.
+            if (stats.isDefense || stats.isInterception) {
                 buckets[bucketIndex] += duration;
                 totalTime += duration;
             }
+            else {
+
+                if (duration > THRESHOLD) {
+                    buckets[bucketIndex] += THRESHOLD;
+                    totalTime += THRESHOLD;
+
+                    let drought = duration - THRESHOLD;
+                    buckets[0] += drought;
+                    totalTime += drought;
+                } else {
+                    buckets[bucketIndex] += duration;
+                    totalTime += duration;
+                }
+            }
         }
-        
+
         // Render the bars
         buckets.forEach((duration, i) => {
-            let label = i===10 ? "50+" : `${i*5}-${i*5+4}`;
+            let label = (i === 10) ? "50+" : `${i * 5}-${(i * 5) + 4}`;
             let pct = totalTime > 0 ? (duration / totalTime * 100).toFixed(1) : "0.0";
-            barHTML += `<div class="bar-container"><div class="bar-label">${label}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><div class="bar-value">${pct}%</div></div>`;
+            let hue = Math.max(0, 100 - (i * 40));
+
+            let lightness = (i > 4) ? "40%" : "50%";
+
+            barHTML += `
+            <div class="bar-container">
+                <div class="bar-label">${label}</div>
+                <div class="bar-track">
+                    <div class="bar-fill" style="width:${pct}%; background-color: hsl(${hue}, 100%, ${lightness});"></div>
+                </div>
+                <div class="bar-value">${pct}%</div>
+            </div>`;
         });
         document.getElementById('saturationBars').innerHTML = barHTML;
-        
+
     } else {
         document.getElementById('saturationBars').innerHTML = "<div style='text-align:center; color:#666; padding:20px;'>No Live data found in log.</div>";
     }
@@ -365,7 +437,7 @@ function renderDashboard(stats) {
                 let curr = waves[i];
                 let dur = 0;
                 if (i < waves.length - 1) {
-                    dur = stats.waveStarts[waves[i+1]] - stats.waveStarts[curr];
+                    dur = stats.waveStarts[waves[i + 1]] - stats.waveStarts[curr];
                 } else {
                     if (stats.lastRewardTime > stats.waveStarts[curr]) {
                         dur = stats.lastRewardTime - stats.waveStarts[curr];
@@ -378,11 +450,10 @@ function renderDashboard(stats) {
         }
     }
 
-// Packs & Rotation Efficiency (Graph + Grid)
+    // Packs & Rotation Efficiency (Graph + Grid)
     if (stats.droneTimestamps.length > 1) {
-// --- A. HOST STABILITY GRAPH (DPM TREND) ---
         const graphEl = document.getElementById('packList');
-        
+
         if (graphEl && graphEl.parentElement) {
             graphEl.parentElement.querySelector('.panel-title').textContent = "Drones Per Minute";
             graphEl.parentElement.querySelector('.panel-desc').textContent = "Line graph for DPM per rotations, alongside average DPM throughout the full run. (Pre-buffing timer is counted for round 1)";
@@ -391,7 +462,11 @@ function renderDashboard(stats) {
         // 1. Calculate DPM
         let dataPoints = [];
         if (stats.rewardTimestamps && stats.rewardTimestamps.length > 0) {
-            let startTime = stats.droneTimestamps[0]; 
+            let startTime = stats.droneTimestamps[0];
+            if (stats.startTime) startTime = stats.startTime; 
+
+            const totalDuration = stats.lastActivityTime - startTime;
+            const minutes = Math.max(0.1, totalDuration / 60);
             let dIdx = 0;
 
             for (let r = 0; r < stats.rewardTimestamps.length; r++) {
@@ -401,10 +476,10 @@ function renderDashboard(stats) {
                     count++;
                     dIdx++;
                 }
-                let durationSec = Math.max(endTime - startTime, 10); 
+                let durationSec = Math.max(endTime - startTime, 10);
                 let mins = durationSec / 60;
                 dataPoints.push(count / mins);
-                startTime = endTime; 
+                startTime = endTime;
             }
         }
 
@@ -417,9 +492,9 @@ function renderDashboard(stats) {
 
             const realMin = Math.min(...dataPoints);
             const realMax = Math.max(...dataPoints);
-            const minVal = Math.floor(realMin); 
+            const minVal = Math.floor(realMin);
             const maxVal = Math.ceil(realMax);
-            const range = maxVal - minVal || 1; 
+            const range = maxVal - minVal || 1;
 
             // A. Main Data Line
             let pathD = "";
@@ -431,7 +506,7 @@ function renderDashboard(stats) {
             });
 
             // B. Average Line
-            const avgVal = dataPoints.reduce((a,b)=>a+b,0) / dataPoints.length;
+            const avgVal = dataPoints.reduce((a, b) => a + b, 0) / dataPoints.length;
             const avgNorm = (avgVal - minVal) / range;
             const avgY = graphH - (avgNorm * graphH);
 
@@ -456,12 +531,12 @@ function renderDashboard(stats) {
             // D. X-Axis Labels
             const lastIdx = dataPoints.length - 1;
             let xLabelHTML = "";
-            const stride = stats.isDefense ? 5 : 1; 
+            const stride = stats.isDefense ? 5 : 1;
             dataPoints.forEach((_, i) => {
                 if (i === 0 || i === lastIdx || (i + 1) % stride === 0) {
                     const x = (i / lastIdx) * graphW;
                     let anchor = i === 0 ? "start" : (i === lastIdx ? "end" : "middle");
-                    xLabelHTML += `<text x="${x}" y="${graphH + 15}" text-anchor="${anchor}" fill="#888">${i+1}</text>`;
+                    xLabelHTML += `<text x="${x}" y="${graphH + 15}" text-anchor="${anchor}" fill="#888">${i + 1}</text>`;
                 }
             });
 
@@ -471,13 +546,13 @@ function renderDashboard(stats) {
                 const x = (i / lastIdx) * graphW;
                 const normalized = (val - minVal) / range;
                 const y = graphH - (normalized * graphH);
-                
+
                 // Visible Dot
                 pointsHTML += `<circle cx="${x}" cy="${y}" r="2" fill="#ffcc33" stroke="none"></circle>`;
-                
+
                 // Invisible Hitbox (Stores data for JS)
                 pointsHTML += `<circle class="graph-point" cx="${x}" cy="${y}" r="8" fill="transparent" 
-                                data-val="${val.toFixed(1)}" data-rot="${i+1}" 
+                                data-val="${val.toFixed(1)}" data-rot="${i + 1}" 
                                 data-x="${x}" data-y="${y}" style="cursor:pointer;"></circle>`;
             });
 
@@ -499,7 +574,7 @@ function renderDashboard(stats) {
             // 3. Attach Custom Tooltip Logic 
             setTimeout(() => {
                 const container = document.getElementById('packList');
-                if(container) {
+                if (container) {
                     // Create shared tooltip element
                     const tip = document.createElement('div');
                     tip.style.cssText = "position:absolute; pointer-events:none; background:#000; color:#fff; padding:5px 10px; border:1px solid #555; border-radius:4px; font-size:0.8rem; white-space:nowrap; display:none; transform:translate(-50%, -130%); z-index:100; top:0; left:0;";
@@ -528,7 +603,7 @@ function renderDashboard(stats) {
         // --- B. EFFICIENCY PER ROTATION (PRESERVED) ---
         let dronesPerRound = [];
         let droneIdx = 0;
-        
+
         if (stats.rewardTimestamps && stats.rewardTimestamps.length > 0) {
             for (let r = 0; r < stats.rewardTimestamps.length; r++) {
                 let endTime = stats.rewardTimestamps[r];
@@ -545,25 +620,25 @@ function renderDashboard(stats) {
         if (listEl && listEl.parentElement) {
             const titleEl = listEl.parentElement.querySelector('.panel-title');
             const descEl = listEl.parentElement.querySelector('.panel-desc');
-            if(titleEl) titleEl.textContent = "Drones Per Rotation";
-            if(descEl) descEl.textContent = "Green = Higher than previous. Red = Lower.";
+            if (titleEl) titleEl.textContent = "Drones Per Rotation";
+            if (descEl) descEl.textContent = "Green = Higher than previous. Red = Lower.";
         }
 
         let outputHTML = "";
-        
+
         if (dronesPerRound.length > 0) {
             const maxVal = Math.max(...dronesPerRound);
 
             const processedData = dronesPerRound.map((count, idx) => {
-                let color = '#fff'; 
-                
+                let color = '#fff';
+
                 if (count === maxVal) {
-                    color = '#FFD700'; 
+                    color = '#FFD700';
                 }
                 else if (idx > 0) {
-                    let prev = dronesPerRound[idx-1];
+                    let prev = dronesPerRound[idx - 1];
                     if (count > prev) color = 'var(--success)';
-                    else if (count < prev) color = 'var(--danger)'; 
+                    else if (count < prev) color = 'var(--danger)';
                 }
                 return { count, color, idx };
             });
@@ -572,13 +647,13 @@ function renderDashboard(stats) {
                 listEl.className = "cumulative-list";
                 listEl.style.display = "block";
                 processedData.forEach(item => {
-                    outputHTML += `<li><span>Round ${item.idx+1}</span> <span style="color:${item.color}; font-weight:bold;">${item.count}</span></li>`;
+                    outputHTML += `<li><span>Round ${item.idx + 1}</span> <span style="color:${item.color}; font-weight:bold;">${item.count}</span></li>`;
                 });
             } else {
                 listEl.className = "wave-grid";
-                listEl.style.display = "grid"; 
+                listEl.style.display = "grid";
                 processedData.forEach(item => {
-                    outputHTML += `<div class="wave-box" style="color:${item.color}; background:#333;" data-tooltip="Rotation ${item.idx+1}">${item.count}</div>`;
+                    outputHTML += `<div class="wave-box" style="color:${item.color}; background:#333;" data-tooltip="Rotation ${item.idx + 1}">${item.count}</div>`;
                 });
             }
         } else {
@@ -590,7 +665,7 @@ function renderDashboard(stats) {
 }
 // --- HELPER ---
 function updateVitusTable(droneCount, rounds) {
-    const p = DROP_CHANCE; 
+    const p = DROP_CHANCE;
     const meanVal = (4 * RETRIEVER_CHANCE) + (2 * (1 - RETRIEVER_CHANCE));
     const expectValSq = (16 * RETRIEVER_CHANCE) + (4 * (1 - RETRIEVER_CHANCE));
     const varVal = expectValSq - Math.pow(meanVal, 2);
@@ -611,35 +686,35 @@ function updateVitusTable(droneCount, rounds) {
 
     const userInput = document.getElementById('actualVitusInput');
     const resultDiv = document.getElementById('luckResult');
-    
+
     if (userInput && userInput.value && resultDiv) {
         const actual = parseFloat(userInput.value);
-        
+
         const percentile = getNormalCDF(actual, grandMean, grandStd);
         const percentage = (percentile * 100).toFixed(1);
-        
-        let color = "#ccc"; 
+
+        let color = "#ccc";
         let text = "Average";
-        
-        if (percentile >= 0.99) { 
-            color = "#FFD700"; text = "GOD ROLL";      
-        } else if (percentile >= 0.90) { 
-            color = "#00e676"; text = "High Roll";      
-        } else if (percentile >= 0.75) { 
-            color = "#b2ff59"; text = "Above Avg";      
-        } else if (percentile > 0.25) { 
-            color = "#ccc";    text = "Average";        
-        } else if (percentile > 0.10) { 
-            color = "#ffcc80"; text = "Below Avg";      
-        } else if (percentile > 0.01) { 
-            color = "#ff9100"; text = "Unlucky";        
-        } else { 
-            color = "#ff5252"; text = "WORST CASE";     
+
+        if (percentile >= 0.99) {
+            color = "#FFD700"; text = "GOD ROLL";
+        } else if (percentile >= 0.90) {
+            color = "#00e676"; text = "High Roll";
+        } else if (percentile >= 0.75) {
+            color = "#b2ff59"; text = "Above Avg";
+        } else if (percentile > 0.25) {
+            color = "#ccc"; text = "Average";
+        } else if (percentile > 0.10) {
+            color = "#ffcc80"; text = "Below Avg";
+        } else if (percentile > 0.01) {
+            color = "#ff9100"; text = "Unlucky";
+        } else {
+            color = "#ff5252"; text = "WORST CASE";
         }
 
         resultDiv.style.color = color;
-        const displayPercent = percentile > 0.5 
-            ? `Top ${(100 - percentage).toFixed(1)}%` 
+        const displayPercent = percentile > 0.5
+            ? `Top ${(100 - percentage).toFixed(1)}%`
             : `Bottom ${percentage}%`;
 
         resultDiv.innerHTML = `${text} (${displayPercent})`;
@@ -652,11 +727,11 @@ function updateVitusTable(droneCount, rounds) {
 // --- DOWNLOAD ---
 function generateReportString(stats) {
     if (!stats) return "No analysis data available.";
-    
+
     let lines = [];
 
     lines.push(`Mission: ${stats.missionName}`);
-    
+
     if (stats.isDefense) {
         lines.push(`Waves:   ${stats.rounds * 3} (${stats.rounds} Rotations)`);
     } else {
@@ -672,28 +747,23 @@ function generateReportString(stats) {
     }
     lines.push(`Drones:  ${droneCount}`);
 
-    // --- NEW: Total Enemies & Ratio ---
-    // We use the tracked 'enemySpawns' + 'droneKills' if you want "Total Spawns",
-    // OR just 'enemySpawns' if you want "Non-Drone Enemies".
-    // Based on typical user needs, "Total Enemies" usually implies Everything minus Turrets.
-    const totalEnemies = stats.enemySpawns + stats.droneKills; 
+    const totalEnemies = stats.enemySpawns + stats.droneKills;
     lines.push(`Total Enemies: ${totalEnemies}`);
-    
+
     const ratio = droneCount > 0 ? (totalEnemies / droneCount).toFixed(2) : "0.00";
     lines.push(`Enemies/Drone: ${ratio}`);
-    // ----------------------------------
 
-    const rotations = stats.rounds; 
+    const rotations = stats.rounds;
     const rotTotalMean = rotations + (rotations * 0.07 * 3);
-    const meanDrops = droneCount * 0.15; 
-    const meanVal = (4 * 0.18) + (2 * (1 - 0.18)); 
+    const meanDrops = droneCount * 0.15;
+    const meanVal = (4 * 0.18) + (2 * (1 - 0.18));
     const grandMean = rotTotalMean + (meanDrops * meanVal);
     lines.push(`Expected Vitus (50%): ${Math.round(grandMean)}`);
 
     if (stats.droneTimestamps.length > 1) {
         let intervals = [];
         for (let i = 1; i < stats.droneTimestamps.length; i++) {
-            intervals.push(stats.droneTimestamps[i] - stats.droneTimestamps[i-1]);
+            intervals.push(stats.droneTimestamps[i] - stats.droneTimestamps[i - 1]);
         }
         const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
         lines.push(`Avg. Drone Interval:  ${avg.toFixed(2)}s`);
@@ -703,13 +773,13 @@ function generateReportString(stats) {
 
     lines.push("");
     lines.push("--- Enemy Saturation ---");
-    
+
     if (stats.liveCounts.length > 0) {
         let buckets = new Array(11).fill(0);
-        stats.liveCounts.forEach(c => buckets[c >= 50 ? 10 : Math.floor(c/5)]++);
+        stats.liveCounts.forEach(c => buckets[c >= 50 ? 10 : Math.floor(c / 5)]++);
         let total = stats.liveCounts.length;
         for (let i = 0; i < 11; i++) {
-            let label = (i === 10) ? "50+" : `${i*5}-${(i*5)+4}`;
+            let label = (i === 10) ? "50+" : `${i * 5}-${(i * 5) + 4}`;
             let pct = (buckets[i] / total * 100).toFixed(1);
             lines.push(`${label.padEnd(8)} : ${pct.padStart(5)}%`);
         }
@@ -729,7 +799,7 @@ function generateReportString(stats) {
                 count++;
                 droneIdx++;
             }
-            lines.push(`Rotation ${r+1}: ${count}`);
+            lines.push(`Rotation ${r + 1}: ${count}`);
         }
     } else {
         lines.push("No rotation data available.");
@@ -746,10 +816,10 @@ downloadBtn.onclick = () => {
     const reportText = generateReportString(currentStats);
     const blob = new Blob([reportText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
-    
+
     let safeName = currentStats.missionName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim();
-    if(!safeName) safeName = "Mission";
-    
+    if (!safeName) safeName = "Mission";
+
     const a = document.createElement('a');
     a.href = url;
     a.download = `${safeName}_REPORT.txt`;
@@ -762,30 +832,30 @@ downloadBtn.onclick = () => {
 // --- SCREENSHOT FUNCTION ---
 async function copyToClipboard() {
     const element = document.getElementById("dashboard");
-    
+
     const btn = event.currentTarget;
     const originalText = btn.innerHTML;
     btn.innerHTML = "⏳ Generating...";
 
     try {
         const canvas = await html2canvas(element, {
-            scale: 2, 
-            backgroundColor: "#121212", 
+            scale: 2,
+            backgroundColor: "#121212",
             logging: false,
             ignoreElements: (el) => el.id === 'actionButtons',
-            
+
             onclone: (clonedDoc) => {
                 // 1. Handle MANUAL DRONE INPUT
                 const manualInput = clonedDoc.getElementById('manualDroneInput');
                 if (manualInput) {
                     if (!manualInput.value) {
-                        // If empty, still hide it for a cleaner report
+                        // If empty, hide it for a cleaner report
                         manualInput.parentElement.style.display = "none";
                     } else {
                         // If user typed a number, render a Centered Box
                         const box = clonedDoc.createElement("div");
                         box.innerText = manualInput.value;
-                        
+
                         box.style.cssText = `
                             background: #333; 
                             border: 1px solid #555; 
@@ -802,7 +872,7 @@ async function copyToClipboard() {
                             justify-content: center;
                             align-items: center;
                         `;
-                        
+
                         manualInput.parentNode.replaceChild(box, manualInput);
                     }
                 }
@@ -810,8 +880,8 @@ async function copyToClipboard() {
                 const vitusInput = clonedDoc.getElementById('actualVitusInput');
                 if (vitusInput) {
                     const box = clonedDoc.createElement("div");
-                    box.innerText = vitusInput.value || "-"; 
-                    
+                    box.innerText = vitusInput.value || "-";
+
                     box.style.cssText = `
                         background: #1a1a1a; 
                         border: 1px solid #444; 
@@ -858,17 +928,17 @@ function getNormalCDF(x, mean, std) {
 }
 
 const actualInput = document.getElementById('actualVitusInput');
-if(actualInput) {
+if (actualInput) {
     actualInput.oninput = () => {
         if (!currentStats) return;
 
         const manualBox = document.getElementById('manualDroneInput');
-        let activeDroneCount = currentStats.droneKills; 
+        let activeDroneCount = currentStats.droneKills;
 
         if (manualBox && manualBox.value !== "") {
             const val = parseInt(manualBox.value);
             if (!isNaN(val) && val >= 0) {
-                activeDroneCount = val; 
+                activeDroneCount = val;
             }
         }
 
