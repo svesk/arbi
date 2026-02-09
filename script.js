@@ -2,6 +2,10 @@
 let currentSaturationSegments = [];
 const DROP_CHANCE = 0.15;
 const RETRIEVER_CHANCE = 0.18;
+// --- MIRROR DEFENSE MAPS (Saturation Under Maintenance) - REMOVABLE FLAG ---
+const MIRROR_DEFENSE_MAPS = ['Munio', 'Tyana'];
+const DISABLE_SATURATION_FOR_MIRROR_DEFENSE = true; // Set to false to re-enable saturation for mirror defense maps
+// --- END REMOVABLE SECTION ---
 const SCENARIOS = [
     { z: -2.326, prob: "99%", desc: "Worst Case" },
     { z: -1.282, prob: "90%", desc: "Unlucky" },
@@ -122,7 +126,6 @@ async function parseFileStream(file) {
     const p_waveDef = /^(\d+\.\d+).*WaveDefend\.lua: Defense wave: (\d+)/;
     const p_timestamp = /^(\d+\.\d+)/;
     const p_liveComplex = /AI \[Info\]:.*?Live (\d+).*?AllyLive (\d+)/;
-    const SPAM = ["Game [Warning]:", "DamagePct exceeds limits"];
 
     // --- READ LOOP ---
     while (offset < file.size) {
@@ -292,6 +295,13 @@ function renderDashboard(stats) {
     currentSaturationSegments = [];
     document.getElementById('missionNodeDisplay').textContent = stats.missionName;
 
+    // --- CHECK IF MIRROR DEFENSE MAP (Saturation Under Maintenance) ---
+    let isMirrorDefense = false;
+    if (DISABLE_SATURATION_FOR_MIRROR_DEFENSE) {
+        isMirrorDefense = MIRROR_DEFENSE_MAPS.some(map => stats.missionName.includes(map));
+    }
+    // --- END REMOVABLE SECTION ---
+
     if (stats.isDefense) {
         missionBadge.textContent = "DEFENSE MISSION";
         missionBadge.style.background = "#ffaa00";
@@ -342,8 +352,7 @@ function renderDashboard(stats) {
 
     // --- Saturation (Dynamic Anomaly + Pause Filter + Capacity Logic V2) ---
     let barHTML = "";
-    let buckets = new Array(11).fill(0);
-    let totalTime = 0;
+
 
     // 1. Calculate Mission "Heartbeat" (Median Interval)
     let allIntervals = [];
@@ -448,7 +457,23 @@ function renderDashboard(stats) {
                 <div class="bar-value">${pct}%</div>
             </div>`;
         });
-        document.getElementById('saturationBars').innerHTML = barHTML;
+        // --- MIRROR DEFENSE MAPS CHECK (Saturation Under Maintenance) ---
+        if (isMirrorDefense) {
+            document.getElementById('saturationBars').innerHTML = "";
+            const satContainer = document.getElementById('saturationStatContainer');
+            if (satContainer) {
+                satContainer.style.opacity = "0.5";
+                satContainer.style.pointerEvents = "none";
+                satContainer.style.display = "flex";
+                satContainer.style.alignItems = "center";
+                satContainer.style.justifyContent = "center";
+                satContainer.style.minHeight = "400px";
+                satContainer.innerHTML = "<div style='text-align:center; color:#999;'><b>Under Maintenance</b><br><i>Map saturation for Mirror Defense is currently disabled.</i></div>";
+            }
+        } else {
+            document.getElementById('saturationBars').innerHTML = barHTML;
+        }
+        // --- END REMOVABLE SECTION ---
 
     } else {
         document.getElementById('saturationBars').innerHTML = "<div style='text-align:center; color:#666; padding:20px;'>No Live data found in log.</div>";
@@ -482,7 +507,7 @@ function renderDashboard(stats) {
 
         if (graphEl && graphEl.parentElement) {
             graphEl.parentElement.querySelector('.panel-title').textContent = "Drones Per Minute";
-            graphEl.parentElement.querySelector('.panel-desc').textContent = "Line graph for DPM per rotations, alongside average DPM throughout the full run. (Pre-buffing timer is counted for round 1)";
+            graphEl.parentElement.querySelector('.panel-desc').textContent = "Line graph for DPM per rotation, alongside average DPM throughout the full run. (Pre-buffing timer is counted for round 1)";
         }
 
         // 1. Calculate DPM
@@ -654,24 +679,28 @@ function renderDashboard(stats) {
             const titleEl = listEl.parentElement.querySelector('.panel-title');
             const descEl = listEl.parentElement.querySelector('.panel-desc');
             if (titleEl) titleEl.textContent = "Drones Per Rotation";
-            if (descEl) descEl.textContent = "Green = Higher than previous. Red = Lower.";
+            if (descEl) descEl.textContent = "Colors represent relative performance: Red (lowest) → Green (highest).";
         }
 
         let outputHTML = "";
 
         if (dronesPerRound.length > 0) {
             const maxVal = Math.max(...dronesPerRound);
+            const minVal = Math.min(...dronesPerRound);
+            const range = maxVal - minVal || 1;
 
             const processedData = dronesPerRound.map((count, idx) => {
                 let color = '#fff';
 
                 if (count === maxVal) {
-                    color = '#FFD700';
-                }
-                else if (idx > 0) {
-                    let prev = dronesPerRound[idx - 1];
-                    if (count > prev) color = 'var(--success)';
-                    else if (count < prev) color = 'var(--danger)';
+                    color = '#00ff22'; // Gold for highest
+                } else if (count === Math.max(...dronesPerRound.filter(v => v !== maxVal))) {
+                    color = '#00e676'; // Full green for second highest
+                } else {
+                    // Gradient: interpolate between red (0) and green (1)
+                    const normalized = (count - minVal) / range;
+                    const hue = normalized * 120; // 0 = red, 120 = green
+                    color = `hsl(${hue}, 100%, 50%)`;
                 }
                 return { count, color, idx };
             });
@@ -1071,5 +1100,3 @@ function updateThresholdStat() {
         thresholdResult.style.color = getGradientColor(parseFloat(pct));
     }
 }
-
-// Call updateThresholdStat when needed (no event listener since input is removed)
