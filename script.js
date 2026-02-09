@@ -45,8 +45,8 @@ async function processFile(file) {
     dropZone.style.display = 'none';
 
     try {
-        const text = await readAndCleanFile(file);
-        const stats = analyzeLogData(text);
+        // Stream Process: Reads and analyzes simultaneously to save RAM
+        const stats = await parseFileStream(file); 
         currentStats = stats;
         renderDashboard(stats);
 
@@ -58,70 +58,32 @@ async function processFile(file) {
 
     } catch (error) {
         console.error(error);
-        statusDiv.textContent = "Error: " + error.message;
-        statusDiv.style.color = "red";
         spinner.style.display = 'none';
         dropZone.style.display = 'block';
+        
+        // Specific help for permission/read errors
+        if (error.name === "NotReadableError") {
+            statusDiv.innerHTML = "<b>Error:</b> File is locked!<br>The game is currently writing to this file.<br>Please <b>copy</b> the EE.log to your Desktop and upload the copy.";
+            statusDiv.style.color = "#ff5252";
+        } else if (error.message.includes("Memory")) {
+             statusDiv.textContent = "Error: Out of Memory. (This update should fix this, try reloading)";
+             statusDiv.style.color = "red";
+        } else {
+            statusDiv.textContent = "Error: " + error.message;
+            statusDiv.style.color = "red";
+        }
     }
 }
 
-// --- CLEANER & OPTIMIZER ---
-async function readAndCleanFile(file) {
-    const CHUNK_SIZE = 1024 * 1024 * 10; // Read 10MB chunks
-    const SPAM = ["Game [Warning]:", "DamagePct exceeds limits"]; // Lines to strip
-    let offset = 0, fullContent = "", leftover = "";
-
-    // 1. Read the file
-    while (offset < file.size) {
-        const slice = file.slice(offset, offset + CHUNK_SIZE);
-        const text = await slice.text();
-        const currentData = leftover + text;
-
-        let lastIdx = currentData.lastIndexOf('\n');
-        let chunk = lastIdx !== -1 && (offset + CHUNK_SIZE < file.size) ? currentData.substring(0, lastIdx) : currentData;
-        leftover = lastIdx !== -1 && (offset + CHUNK_SIZE < file.size) ? currentData.substring(lastIdx + 1) : "";
-
-        const lines = chunk.split('\n');
-        for (let line of lines) {
-            let isSpam = false;
-            for (let s of SPAM) if (line.includes(s)) { isSpam = true; break; }
-            if (!isSpam) fullContent += line + '\n';
-        }
-        offset += CHUNK_SIZE;
-
-        // Progress Bar
-        let pct = Math.min(100, (offset / file.size) * 100).toFixed(0);
-        statusDiv.textContent = `Reading... ${pct}%`;
-        await new Promise(r => setTimeout(r, 0));
-    }
-
-    const lastStartRegex = /Script \[Info\]: ThemedSquadOverlay\.lua: Mission name: (.*)/g;
-    let match;
-    let lastIndex = -1;
-
-    // Loop through to find the very last occurrence
-    while ((match = lastStartRegex.exec(fullContent)) !== null) {
-        // Only care if it's an Arbitration
-        if (match[1].includes("Arbitration")) {
-            lastIndex = match.index;
-        }
-    }
-
-    // If we found a valid run, discard everything before it
-    if (lastIndex !== -1) {
-        console.log("Optimizing: Truncating log to last Arbitration run at index", lastIndex);
-        return fullContent.substring(lastIndex);
-    }
-
-    return fullContent;
-}
-
-// --- ANALYZER ---
-
-function analyzeLogData(text) {
-    const lines = text.split(/\r?\n/);
+// --- STREAMING ANALYZER (Replaces Cleaner & Analyzer) ---
+async function parseFileStream(file) {
+    const CHUNK_SIZE = 1024 * 1024 * 10; // Read in 10MB chunks
+    let offset = 0;
+    let leftover = "";
+    
+    // --- STATE MANAGEMENT ---
     let sessions = [];
-
+    
     const createStats = () => ({
         droneKills: 0,
         enemySpawns: 0,
@@ -141,144 +103,178 @@ function analyzeLogData(text) {
         currentSimCap: 32,
         preciseStartTime: null
     });
-
+    
     let current = createStats();
 
-    // Regex Patterns
+    // --- REGEX PATTERNS (Compiled once for speed) ---
     const p_overlay = /Script \[Info\]: ThemedSquadOverlay\.lua: Mission name: (.*)/;
     const p_agent = /OnAgentCreated/;
     const p_drone = /OnAgentCreated.*?CorpusEliteShieldDroneAgent/;
     const p_turret = /OnAgentCreated.*?(?:\/Npc\/)?AutoTurretAgentShipRemaster/;
-
-    // Mode Triggers
     const p_reward_def = /Sys \[Info\]: Created \/Lotus\/Interface\/DefenseReward\.swf/;
     const p_reward_surv = /Sys \[Info\]: Created \/Lotus\/Interface\/SurvivalReward\.swf/;
-
-    // Pause Triggers
     const p_sleep = /WaveDefend\.lua: _SleepBetweenWaves/;
     const p_waveStart = /WaveDefend\.lua: Starting wave (\d+)/;
     const p_interception_start = /Script \[Info\]: TerritoryMission\.lua/;
-
-    // NEW: Defense Capacity Logic
     const p_waveCap = /WaveDefend\.lua: Starting wave \d+.*?\((\d+) simultaneous/;
     const p_monitored = /AI \[Info\]: .*?MonitoredTicking (\d+)/;
-
     const p_defWave = /WaveDefend\.lua: Defense wave: 1/;
     const p_waveDef = /^(\d+\.\d+).*WaveDefend\.lua: Defense wave: (\d+)/;
     const p_timestamp = /^(\d+\.\d+)/;
     const p_liveComplex = /AI \[Info\]:.*?Live (\d+).*?AllyLive (\d+)/;
+    const SPAM = ["Game [Warning]:", "DamagePct exceeds limits"];
 
-    for (let line of lines) {
-        let timestamp = 0;
-        const tsMatch = line.match(p_timestamp);
-        if (tsMatch) timestamp = parseFloat(tsMatch[1]);
+    // --- READ LOOP ---
+    while (offset < file.size) {
+        // 1. Read a chunk
+        const slice = file.slice(offset, offset + CHUNK_SIZE);
+        const text = await slice.text();
+        
+        // 2. Handle line breaks across chunks
+        const currentData = leftover + text;
+        let lastIdx = currentData.lastIndexOf('\n');
+        
+        // If EOF, force process everything
+        if (offset + CHUNK_SIZE >= file.size && lastIdx === -1) {
+             lastIdx = currentData.length; 
+        }
 
-        // 1. Mission Start
-        const mMission = line.match(p_overlay);
-        if (mMission) {
-            let name = mMission[1].trim();
-            if (name.includes("Arbitration")) {
-                if (timestamp > 0 && current.lastActivityTime > 0 && timestamp < current.lastActivityTime) {
-                    continue;
+        const chunk = lastIdx !== -1 ? currentData.substring(0, lastIdx) : "";
+        leftover = lastIdx !== -1 ? currentData.substring(lastIdx + 1) : currentData;
+
+        // 3. Process Lines Immediately (No giant string storage)
+        const lines = chunk.split(/\r?\n/);
+        for (let line of lines) {
+            if (!line) continue;
+            
+            // Optimization: Skip spam lines early
+            let isSpam = false;
+            if (line.includes("Game [Warning]:") || line.includes("DamagePct")) isSpam = true;
+            if (isSpam) continue;
+
+            // --- ANALYSIS LOGIC ---
+            let timestamp = 0;
+            const tsMatch = line.match(p_timestamp);
+            if (tsMatch) timestamp = parseFloat(tsMatch[1]);
+
+            // Mission Start
+            const mMission = line.match(p_overlay);
+            if (mMission) {
+                let name = mMission[1].trim();
+                if (name.includes("Arbitration")) {
+                    // Check if previous session was stale/invalid or just starting
+                    if (timestamp > 0 && current.lastActivityTime > 0 && timestamp < current.lastActivityTime) {
+                        continue;
+                    }
+                    if (current.hasData || current.missionName !== "Unknown Node") sessions.push(current);
+                    current = createStats();
+                    current.missionName = name.replace("Arbitration:", "").trim();
+                    if (timestamp) current.lastActivityTime = timestamp;
                 }
-                if (current.hasData || current.missionName !== "Unknown Node") sessions.push(current);
-                current = createStats();
-                current.missionName = name.replace("Arbitration:", "").trim();
-                if (timestamp) current.lastActivityTime = timestamp;
+                continue;
             }
-            continue;
-        }
 
-        // 2. Pause Logic
-        if (p_sleep.test(line) || p_reward_def.test(line)) {
-            if (current.currentPauseStart === null && timestamp > 0) current.currentPauseStart = timestamp;
-        }
-        let isUnpause = false;
-        if (current.isDefense && p_waveStart.test(line)) isUnpause = true;
-        if (p_interception_start.test(line)) { current.isInterception = true; isUnpause = true; }
-
-        if (isUnpause && current.currentPauseStart !== null && timestamp > 0) {
-            current.pauseIntervals.push({ start: current.currentPauseStart, end: timestamp });
-            current.currentPauseStart = null;
-        }
-
-        const p_defStart1 = /WaveDefend\.lua: Defense wave: 1/;
-        const p_intStartInit = /Script \[Info\]: TerritoryMission\.lua: .*?(?:control|captured|Control|Captured)/;
-
-        if (current.preciseStartTime === null) {
-            if (p_defStart1.test(line)) {
-                current.preciseStartTime = timestamp;
+            // Pause Logic
+            if (p_sleep.test(line) || p_reward_def.test(line)) {
+                if (current.currentPauseStart === null && timestamp > 0) current.currentPauseStart = timestamp;
             }
-            else if (p_intStartInit.test(line)) {
-                current.preciseStartTime = timestamp;
-                current.isInterception = true;
-            }
-        }
+            let isUnpause = false;
+            if (current.isDefense && p_waveStart.test(line)) isUnpause = true;
+            if (p_interception_start.test(line)) { current.isInterception = true; isUnpause = true; }
 
-        // 3. Round Counting
-        let isRoundEvent = false;
-        if (current.missionName.includes("Survival")) {
-            if (p_reward_surv.test(line)) isRoundEvent = true;
-        } else {
-            if (p_reward_def.test(line)) isRoundEvent = true;
-        }
-        if (isRoundEvent) {
-            if (timestamp - current.lastRewardTime > 30) {
-                current.rounds++;
+            if (isUnpause && current.currentPauseStart !== null && timestamp > 0) {
+                current.pauseIntervals.push({ start: current.currentPauseStart, end: timestamp });
+                current.currentPauseStart = null;
+            }
+
+            const p_defStart1 = /WaveDefend\.lua: Defense wave: 1/;
+            const p_intStartInit = /Script \[Info\]: TerritoryMission\.lua: .*?(?:control|captured|Control|Captured)/;
+
+            if (current.preciseStartTime === null) {
+                if (p_defStart1.test(line)) {
+                    current.preciseStartTime = timestamp;
+                }
+                else if (p_intStartInit.test(line)) {
+                    current.preciseStartTime = timestamp;
+                    current.isInterception = true;
+                }
+            }
+
+            // Round Counting
+            let isRoundEvent = false;
+            if (current.missionName.includes("Survival")) {
+                if (p_reward_surv.test(line)) isRoundEvent = true;
+            } else {
+                if (p_reward_def.test(line)) isRoundEvent = true;
+            }
+            if (isRoundEvent) {
+                if (timestamp - current.lastRewardTime > 30) {
+                    current.rounds++;
+                    current.hasData = true;
+                    current.lastRewardTime = timestamp;
+                    current.rewardTimestamps.push(timestamp);
+                    current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
+                    if (current.currentPauseStart === null) current.currentPauseStart = timestamp;
+                }
+            }
+
+            const mCap = line.match(p_waveCap);
+            if (mCap) current.currentSimCap = parseInt(mCap[1]);
+
+            let dataPoint = null;
+            const mMonitored = line.match(p_monitored);
+
+            if ((current.isDefense || current.isInterception) && mMonitored) {
+                dataPoint = { t: timestamp, val: parseInt(mMonitored[1]), cap: current.currentSimCap };
+            } else if (!current.isDefense && !current.isInterception) {
+                const mLive = line.match(p_liveComplex);
+                if (mLive) {
+                    let total = parseInt(mLive[1]);
+                    let allies = parseInt(mLive[2]);
+                    dataPoint = { t: timestamp, val: Math.max(0, total - allies) };
+                }
+            }
+            if (dataPoint && timestamp) current.liveCounts.push(dataPoint);
+
+            // Gameplay Data
+            if (p_drone.test(line)) {
+                current.droneKills++;
                 current.hasData = true;
-                current.lastRewardTime = timestamp;
-                current.rewardTimestamps.push(timestamp);
-                current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
-                if (current.currentPauseStart === null) current.currentPauseStart = timestamp;
+                if (timestamp) {
+                    current.droneTimestamps.push(timestamp);
+                    current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
+                }
+            } else if (p_agent.test(line)) {
+                if (!p_turret.test(line)) current.enemySpawns++;
             }
-        }
 
-        const mCap = line.match(p_waveCap);
-        if (mCap) current.currentSimCap = parseInt(mCap[1]);
-
-        let dataPoint = null;
-        const mMonitored = line.match(p_monitored);
-
-        if ((current.isDefense || current.isInterception) && mMonitored) {
-            dataPoint = { t: timestamp, val: parseInt(mMonitored[1]), cap: current.currentSimCap };
-        } else if (!current.isDefense && !current.isInterception) {
-            const mLive = line.match(p_liveComplex);
-            if (mLive) {
-                let total = parseInt(mLive[1]);
-                let allies = parseInt(mLive[2]);
-                dataPoint = { t: timestamp, val: Math.max(0, total - allies) };
-            }
-        }
-        if (dataPoint && timestamp) current.liveCounts.push(dataPoint);
-
-        // 5. Gameplay Data
-        if (p_drone.test(line)) {
-            current.droneKills++;
-            current.hasData = true;
-            if (timestamp) {
-                current.droneTimestamps.push(timestamp);
+            if (p_defWave.test(line)) current.isDefense = true;
+            let mWave = line.match(p_waveDef);
+            if (mWave && timestamp) {
+                current.waveStarts[parseInt(mWave[2])] = timestamp;
                 current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
             }
-        } else if (p_agent.test(line)) {
-            if (!p_turret.test(line)) current.enemySpawns++;
         }
 
-        if (p_defWave.test(line)) current.isDefense = true;
-        let mWave = line.match(p_waveDef);
-        if (mWave && timestamp) {
-            current.waveStarts[parseInt(mWave[2])] = timestamp;
-            current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
-        }
+        offset += CHUNK_SIZE;
+        
+        // Update UI Progress
+        let pct = Math.min(100, (offset / file.size) * 100).toFixed(0);
+        statusDiv.textContent = `Analyzing... ${pct}%`;
+        
+        // Critical: Yield to UI thread to prevent browser freeze
+        await new Promise(r => setTimeout(r, 0));
     }
 
+    // --- FINALIZE ---
     if (current.hasData || current.missionName !== "Unknown Node") sessions.push(current);
 
+    // Pick best session
     let bestSession = null;
     for (let i = sessions.length - 1; i >= 0; i--) {
         const s = sessions[i];
         if (s.rounds > 0 && s.droneKills > 20) { bestSession = s; break; }
     }
-
 
     if (bestSession && bestSession.preciseStartTime !== null) {
         if (bestSession.droneTimestamps.length > 0) {
