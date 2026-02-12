@@ -731,8 +731,8 @@ function updateVitusTable(droneCount, rounds) {
     const meanVal = (4 * RETRIEVER_CHANCE) + (2 * (1 - RETRIEVER_CHANCE));
     const expectValSq = (16 * RETRIEVER_CHANCE) + (4 * (1 - RETRIEVER_CHANCE));
     const varVal = expectValSq - Math.pow(meanVal, 2);
-    const rotTotalMean = rounds + (rounds * 0.07 * 3);
-    const rotVar = rounds * 0.07 * (1 - 0.07) * 9;
+    const rotTotalMean = rounds + (rounds * 0.10 * 3);
+    const rotVar = rounds * 0.10 * (1 - 0.10) * 9;
     const meanDrops = droneCount * p;
     const varDrops = droneCount * p * (1 - p);
     const totalDroneMean = meanDrops * meanVal;
@@ -816,7 +816,7 @@ function generateReportString(stats) {
     lines.push(`Enemies/Drone: ${ratio}`);
 
     const rotations = stats.rounds;
-    const rotTotalMean = rotations + (rotations * 0.07 * 3);
+    const rotTotalMean = rotations + (rotations * 0.10 * 3);
     const meanDrops = droneCount * 0.15;
     const meanVal = (4 * 0.18) + (2 * (1 - 0.18));
     const grandMean = rotTotalMean + (meanDrops * meanVal);

@@ -214,3 +214,31 @@ table {
     flex: 1;
     min-height: 0;
 }
+
+/* Leaderboard-specific responsiveness */
+.leaderboard-panel .table-wrapper {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 700px) {
+    h1 { font-size: 1.4rem; }
+    .subtitle { font-size: 0.9rem; }
+    .panel { padding: 12px; }
+
+    /* Make panel scrollable so page doesn't scale to fit entire content */
+    .leaderboard-panel { max-height: calc(100vh - 140px); overflow: auto; }
+
+    /* Limit table wrapper height on small screens only */
+    .leaderboard-panel .table-wrapper { max-height: calc(100vh - 180px); }
+
+    /* Convert table into stacked cards for readability */
+    .leaderboard-panel table thead { display: none; }
+    .leaderboard-panel table, .leaderboard-panel tbody, .leaderboard-panel tr { display: block; width: 100%; }
+    .leaderboard-panel tr { margin: 0 0 12px 0; padding: 10px; background: #1a1a1a; border-radius: 8px; }
+    .leaderboard-panel td { display: flex; justify-content: space-between; padding: 6px 8px; border: none; }
+    .leaderboard-panel td:first-child { color: var(--primary); font-weight: bold; }
+    .leaderboard-panel td:nth-child(2) { font-weight: bold; color: var(--text-main); }
+    .leaderboard-panel td:nth-child(3) { color: var(--text-muted); font-size: 0.95rem; }
+    .leaderboard-panel td:nth-child(4) { text-align: right; color: var(--primary); font-weight: bold; }
+}
