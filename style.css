@@ -226,6 +226,11 @@ table {
     .subtitle { font-size: 0.9rem; }
     .panel { padding: 12px; }
 
+    /* Fix button overlap on mobile */
+    div[style*="margin-bottom: -30px"] {
+        margin-bottom: 20px !important;
+    }
+
     /* Make panel scrollable so page doesn't scale to fit entire content */
     .leaderboard-panel { max-height: calc(100vh - 140px); overflow: auto; }
 
