@@ -34,17 +34,14 @@
                 <div
                     style="background: #252525; padding: 15px; border-radius: 8px; border-left: 3px solid #D3D3D3; margin: 20px 0; text-align: left; font-size: 0.9rem;">
                     <strong style="color: #e0e0e0;">Where is my EE.log?</strong><br>
-                    Press Windows Key + R, enter: %localappdata%\Warframe, and you will see your EE.log file.
-                    The game automatically deletes your previous EE.log every time you open the game. For best results,
-                    restart your game before the arbitration and analyze right afterwards.
+                    Press Windows Key + R, enter: <b>%localappdata%\Warframe</b>, and you will see your EE.log file.
+                    Keep in mind that the game automatically deletes your previous EE.log every time you open the game.
                 </div>
 
                 <div
                     style="background: #252525; padding: 15px; border-radius: 8px; border-left: 3px solid #D3D3D3; margin: 20px 0; text-align: left; font-size: 0.9rem;">
                     <strong style="color: #e0e0e0;">Small Note:</strong><br>
-                    In-game logs often miscount drone kills when against certain factions (around a ± 2-4% difference).
-                    For 100% precision, both DPS can count drone kills before and after the run using the browse.wf
-                    profile viewer.
+                    A discrepancy between EE.log numbers and in-game stats is expected. The game's UI is known to misreport kills due to client/server desync. This tool considers the raw EE.log data as the true data.
                 </div>
 
                 <p style="font-size: 0.85rem; opacity: 0.7;">
@@ -73,6 +70,24 @@
 
             <div class="kpi-grid">
                 <div class="kpi-card">
+                    <div class="kpi-label">Total Enemies Spawned</div>
+                    <div class="kpi-value" id="kpiEnemySpawns">0</div>
+                    <div class="kpi-sub">Filtered for non-ticking agents</div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-label">Kills per Drone</div>
+                    <div class="kpi-value" id="kpiKillsPerDrone">0.00</div>
+                    <div class="kpi-sub">Enemies spawned per drone</div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-label">Avg Drone Interval</div>
+                    <div class="kpi-value" id="kpiDroneInterval">0.00s</div>
+                    <div class="kpi-sub">Avg. time between drone spawns</div>
+                </div>
+
+                <div class="kpi-card">
                     <div class="kpi-label">Drones Killed (Log)</div>
                     <div class="kpi-value" id="kpiDrones">0</div>
 
@@ -84,9 +99,10 @@
                 </div>
 
                 <div class="kpi-card">
-                    <div class="kpi-label">Avg Drone Interval</div>
-                    <div class="kpi-value" id="kpiDroneInterval">0.00s</div>
-                    <div class="kpi-sub">Avg. time between drone spawns</div>
+                    <div class="kpi-label">Run Duration & Pace</div>
+                    <div class="kpi-value" id="kpiRealDuration">0m 0s</div>
+                    <div class="kpi-sub" id="kpiPace">Start: wave 1 or point captured.</div>
+                    <div class="kpi-sub" id="kpiEnd">End: final extraction screen.</div>
                 </div>
 
                 <div class="kpi-card">

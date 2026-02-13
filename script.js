@@ -4,7 +4,7 @@ const DROP_CHANCE = 0.15;
 const RETRIEVER_CHANCE = 0.18;
 // --- MIRROR DEFENSE MAPS (Saturation Under Maintenance) - REMOVABLE FLAG ---
 const MIRROR_DEFENSE_MAPS = ['Munio', 'Tyana'];
-const DISABLE_SATURATION_FOR_MIRROR_DEFENSE = true; // Set to false to re-enable saturation for mirror defense maps
+const DISABLE_SATURATION_FOR_MIRROR_DEFENSE = false; // mirror defense saturation enabled for maps listed below
 // --- END REMOVABLE SECTION ---
 const SCENARIOS = [
     { z: -2.326, prob: "99%", desc: "Worst Case" },
@@ -105,18 +105,26 @@ async function parseFileStream(file) {
         lastActivityTime: 0,
         currentPauseStart: null,
         currentSimCap: 32,
-        preciseStartTime: null
+        preciseStartTime: null,
+        // collected raw spawn records for strict non-ticking analysis (ported from exc/spawns.py)
+        allSpawns: [] // { name: string, tick: number | null }
     });
     
     let current = createStats();
 
+    // Agents to force-count even if analysis suggests they don't tick
+    const FORCED_VALID_AGENTS = new Set([
+        "CorpusEliteShieldDroneAgent"
+    ]);
+
     // --- REGEX PATTERNS (Compiled once for speed) ---
     const p_overlay = /Script \[Info\]: ThemedSquadOverlay\.lua: Mission name: (.*)/;
     const p_agent = /OnAgentCreated/;
+    // Attempt to capture agent name and MonitoredTicking when present
+    const p_agent_full = /OnAgentCreated.*?\/Npc\/(.+?)(\d+)\s+.*?MonitoredTicking\s+(\d+)/;
     const p_drone = /OnAgentCreated.*?CorpusEliteShieldDroneAgent/;
-    const p_turret = /OnAgentCreated.*?(?:\/Npc\/)?AutoTurretAgentShipRemaster/;
+    const p_excludedAgents = /(Replicant|RJCrew|petavatar|VoidClone|Turret|Dropship|CatbrowPetAgent|AllyAgent)/i;
     const p_reward_def = /Sys \[Info\]: Created \/Lotus\/Interface\/DefenseReward\.swf/;
-    const p_reward_surv = /Sys \[Info\]: Created \/Lotus\/Interface\/SurvivalReward\.swf/;
     const p_sleep = /WaveDefend\.lua: _SleepBetweenWaves/;
     const p_waveStart = /WaveDefend\.lua: Starting wave (\d+)/;
     const p_interception_start = /Script \[Info\]: TerritoryMission\.lua/;
@@ -125,7 +133,6 @@ async function parseFileStream(file) {
     const p_defWave = /WaveDefend\.lua: Defense wave: 1/;
     const p_waveDef = /^(\d+\.\d+).*WaveDefend\.lua: Defense wave: (\d+)/;
     const p_timestamp = /^(\d+\.\d+)/;
-    const p_liveComplex = /AI \[Info\]:.*?Live (\d+).*?AllyLive (\d+)/;
 
     // --- READ LOOP ---
     while (offset < file.size) {
@@ -172,6 +179,27 @@ async function parseFileStream(file) {
                     if (current.hasData || current.missionName !== "Unknown Node") sessions.push(current);
                     current = createStats();
                     current.missionName = name.replace("Arbitration:", "").trim();
+
+                    // --- EARLY MISSION-TYPE DETECTION ---
+                    // If mission name contains 'Defense' or 'Interception' mark the
+                    // session accordingly *immediately* so MonitoredTicking lines
+                    // (which can appear before 'Defense wave: 1') are treated
+                    // using the strict defense/interception logic (no live-fallback).
+                    const mNameLower = current.missionName.toLowerCase();
+                    if (mNameLower.includes('defense')) {
+                        current.isDefense = true;
+                    } else if (mNameLower.includes('interception')) {
+                        current.isInterception = true;
+                    }
+
+                    // ALSO: Mirror Defense nodes are sometimes identified only by
+                    // the node name (e.g. 'Munio', 'Alator', 'Tyana'). Ensure these
+                    // are treated as Defense so MonitoredTicking is applied.
+                    if (!current.isDefense && Array.isArray(MIRROR_DEFENSE_MAPS)) {
+                        const nodeMatch = MIRROR_DEFENSE_MAPS.some(m => current.missionName.toLowerCase().includes(m.toLowerCase()));
+                        if (nodeMatch) current.isDefense = true;
+                    }
+
                     if (timestamp) current.lastActivityTime = timestamp;
                 }
                 continue;
@@ -203,13 +231,9 @@ async function parseFileStream(file) {
                 }
             }
 
-            // Round Counting
+            // Round Counting (Defense / Interception only)
             let isRoundEvent = false;
-            if (current.missionName.includes("Survival")) {
-                if (p_reward_surv.test(line)) isRoundEvent = true;
-            } else {
-                if (p_reward_def.test(line)) isRoundEvent = true;
-            }
+            if (p_reward_def.test(line)) isRoundEvent = true;
             if (isRoundEvent) {
                 if (timestamp - current.lastRewardTime > 30) {
                     current.rounds++;
@@ -227,15 +251,9 @@ async function parseFileStream(file) {
             let dataPoint = null;
             const mMonitored = line.match(p_monitored);
 
+            // Only use MonitoredTicking for Defense / Interception (Mirror Defense marked as Defense)
             if ((current.isDefense || current.isInterception) && mMonitored) {
                 dataPoint = { t: timestamp, val: parseInt(mMonitored[1]), cap: current.currentSimCap };
-            } else if (!current.isDefense && !current.isInterception) {
-                const mLive = line.match(p_liveComplex);
-                if (mLive) {
-                    let total = parseInt(mLive[1]);
-                    let allies = parseInt(mLive[2]);
-                    dataPoint = { t: timestamp, val: Math.max(0, total - allies) };
-                }
             }
             if (dataPoint && timestamp) current.liveCounts.push(dataPoint);
 
@@ -248,7 +266,28 @@ async function parseFileStream(file) {
                     current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
                 }
             } else if (p_agent.test(line)) {
-                if (!p_turret.test(line)) current.enemySpawns++;
+                // Exclude certain agents from strict spawn counts but keep line for saturation
+                const isExcludedAgent = p_excludedAgents.test(line);
+                if (isExcludedAgent) continue;
+
+                // Basic increment for compatibility
+                current.enemySpawns++;
+
+                // Attempt to capture detailed spawn info (name + MonitoredTicking) similar to exc/spawns.py
+                const mAgentFull = line.match(p_agent_full);
+                if (mAgentFull) {
+                    const agentName = mAgentFull[1];
+                    const tick = parseInt(mAgentFull[3]);
+                    current.allSpawns.push({ name: agentName, tick: isNaN(tick) ? null : tick });
+                } else {
+                    // Fallback: try to extract name only
+                    const mNpc = line.match(/\/Npc\/([A-Za-z0-9_]+)/);
+                    if (mNpc) {
+                        current.allSpawns.push({ name: mNpc[1], tick: null });
+                    } else {
+                        current.allSpawns.push({ name: null, tick: null });
+                    }
+                }
             }
 
             if (p_defWave.test(line)) current.isDefense = true;
@@ -279,13 +318,61 @@ async function parseFileStream(file) {
         if (s.rounds > 0 && s.droneKills > 20) { bestSession = s; break; }
     }
 
-    if (bestSession && bestSession.preciseStartTime !== null) {
-        if (bestSession.droneTimestamps.length > 0) {
-            bestSession.startTime = bestSession.preciseStartTime;
+    const chosen = bestSession || sessions[sessions.length - 1] || createStats();
+
+    // --- STRICT Non-Ticking Agent Analysis (ported from exc/spawns.py) ---
+    // NOTE: This block performs a strict *counting* filter for enemySpawns only.
+    // It MUST NOT alter `liveCounts` or `currentSaturationSegments` (saturation
+    // must always be driven by raw MonitoredTicking samples). To be defensive,
+    // we temporarily preserve saturation input and restore it after the analysis.
+    try {
+        // Preserve saturation inputs (no-op restore ensures saturation unchanged)
+        const _preservedLiveCounts = (chosen && Array.isArray(chosen.liveCounts)) ? chosen.liveCounts.slice() : [];
+
+        if (chosen && Array.isArray(chosen.allSpawns) && chosen.allSpawns.length > 0) {
+            // Only consider named spawns
+            const named = chosen.allSpawns.filter(s => s.name !== null && s.name !== undefined);
+
+            const confirmedTicking = new Set();
+            const suspectedNonTicking = new Set();
+
+            for (let i = 1; i < named.length; i++) {
+                const prev = named[i - 1];
+                const curr = named[i];
+                const agentName = prev.name;
+                if (prev.tick !== null && curr.tick !== null) {
+                    if (curr.tick > prev.tick) confirmedTicking.add(agentName);
+                    else suspectedNonTicking.add(agentName);
+                }
+            }
+
+            const initialNonTicking = Array.from(suspectedNonTicking).filter(x => !confirmedTicking.has(x));
+            const trueNonTicking = new Set(initialNonTicking.filter(x => !FORCED_VALID_AGENTS.has(x)));
+
+            // Recalculate valid spawn count excluding true non-ticking agents
+            let validSpawns = 0;
+            for (let sp of chosen.allSpawns) {
+                if (!sp.name) { validSpawns++; continue; }
+                if (!trueNonTicking.has(sp.name)) validSpawns++;
+            }
+
+            chosen.enemySpawns = validSpawns;
+            chosen.trueNonTickingAgents = Array.from(trueNonTicking);
+        }
+
+        // Restore preserved saturation inputs to guarantee no side-effects
+        if (chosen) chosen.liveCounts = _preservedLiveCounts;
+    } catch (e) {
+        console.warn('Non-ticking agent analysis failed:', e);
+    }
+
+    if (chosen && chosen.preciseStartTime !== null) {
+        if (chosen.droneTimestamps.length > 0) {
+            chosen.startTime = chosen.preciseStartTime;
         }
     }
 
-    return bestSession || sessions[sessions.length - 1] || createStats();
+    return chosen;
 }
 
 
@@ -302,11 +389,23 @@ function renderDashboard(stats) {
     }
     // --- END REMOVABLE SECTION ---
 
+    // Determine if this node is a mirror-defense map (e.g. Munio, Tyana)
+    const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(m => stats.missionName.toLowerCase().includes(m.toLowerCase()));
+
     if (stats.isDefense) {
         missionBadge.textContent = "DEFENSE MISSION";
         missionBadge.style.background = "#ffaa00";
         missionBadge.style.color = "#000";
-        if (waveMapPanel) waveMapPanel.classList.remove('hidden');
+        if (waveMapPanel) {
+            // Hide the Wave Clear Map for mirror-defense nodes to prevent showing an invalid map
+            if (isMirrorNode) {
+                waveMapPanel.classList.add('hidden');
+                const wg = document.getElementById('waveGrid');
+                if (wg) wg.innerHTML = "";
+            } else {
+                waveMapPanel.classList.remove('hidden');
+            }
+        }
     } else {
         missionBadge.textContent = "INTERCEPTION MISSION";
         missionBadge.style.background = "#ffaa00";
@@ -316,6 +415,19 @@ function renderDashboard(stats) {
 
     // KPI: Drones & Manual Input
     document.getElementById('kpiDrones').textContent = stats.droneKills.toLocaleString();
+    const totalEnemies = stats.enemySpawns + stats.droneKills;
+    document.getElementById('kpiEnemySpawns').textContent = totalEnemies.toLocaleString();
+
+    const updateKillsPerDrone = (droneCount) => {
+        if (!droneCount || droneCount <= 0) {
+            document.getElementById('kpiKillsPerDrone').textContent = "N/A";
+            return;
+        }
+        const killsPerDrone = totalEnemies / droneCount;
+        document.getElementById('kpiKillsPerDrone').textContent = killsPerDrone.toFixed(2);
+    };
+
+    updateKillsPerDrone(stats.droneKills);
 
     const manualInput = document.getElementById('manualDroneInput');
     manualInput.value = "";
@@ -323,6 +435,7 @@ function renderDashboard(stats) {
         const val = parseInt(manualInput.value);
         const countToUse = (isNaN(val) || val < 0) ? stats.droneKills : val;
         updateVitusTable(countToUse, stats.rounds);
+        updateKillsPerDrone(countToUse);
     };
 
     // KPI: Intervals
@@ -337,10 +450,29 @@ function renderDashboard(stats) {
         document.getElementById('kpiDroneInterval').textContent = "N/A";
     }
 
+    // KPI: Run Duration & Pace
+    const startTime = stats.startTime || stats.droneTimestamps[0] || 0;
+    const endTime = stats.lastActivityTime || 0;
+    const durationSeconds = Math.max(0, endTime - startTime);
+
+    if (durationSeconds >= 3600) {
+        const durationHours = Math.floor(durationSeconds / 3600);
+        const durationMinutes = Math.floor((durationSeconds % 3600) / 60);
+        const durationRemainder = Math.floor(durationSeconds % 60);
+        document.getElementById('kpiRealDuration').textContent = `${durationHours}h ${durationMinutes}m ${durationRemainder}s`;
+    } else {
+        const durationMinutes = Math.floor(durationSeconds / 60);
+        const durationRemainder = Math.floor(durationSeconds % 60);
+        document.getElementById('kpiRealDuration').textContent = `${durationMinutes}m ${durationRemainder}s`;
+    }
+
     // KPI: Duration
     if (stats.isDefense) {
+        // Mirror Defense uses 2 waves per rotation; standard Defense uses 3
+        const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(m => stats.missionName.toLowerCase().includes(m.toLowerCase()));
+        const wavesPerRotation = isMirrorNode ? 2 : 3;
         document.getElementById('kpiDurationLabel').textContent = "Total Waves";
-        document.getElementById('kpiDuration').textContent = stats.rounds * 3;
+        document.getElementById('kpiDuration').textContent = stats.rounds * wavesPerRotation;
         document.getElementById('kpiDuration').nextElementSibling.textContent = `(${stats.rounds} Rotations)`;
     } else {
         document.getElementById('kpiDurationLabel').textContent = "Total Rounds";
@@ -353,6 +485,9 @@ function renderDashboard(stats) {
     // --- Saturation (Dynamic Anomaly + Pause Filter + Capacity Logic V2) ---
     let barHTML = "";
 
+    // Mission-aligned window for saturation calculations
+    const satStart = startTime || 0;
+    const satEnd = endTime || 0;
 
     // 1. Calculate Mission "Heartbeat" (Median Interval)
     let allIntervals = [];
@@ -372,10 +507,9 @@ function renderDashboard(stats) {
     if (stats.liveCounts.length > 1) {
 
         // A. DETERMINE RESOLUTION
-        // Defense/Interception: Cap is ~30. We use Step 3 for "High Def" (0-2, 3-5, ... 27-29) -> ~10 Bars
-        // Survival: Cap is ~50+. We use Step 5 for "Wide Range" (0-4, 5-9, ... 50+) -> ~11 Bars
-        let step = (stats.isDefense || stats.isInterception) ? 3 : 5;
-        let maxVal = (stats.isDefense || stats.isInterception) ? 30 : 55;
+        // Defense/Interception (including Mirror Defense): Cap is ~30; use step 3.
+        let step = 3;
+        let maxVal = 30;
         let numBuckets = Math.ceil(maxVal / step);
 
         let buckets = new Array(numBuckets).fill(0);
@@ -385,16 +519,20 @@ function renderDashboard(stats) {
         for (let i = 0; i < stats.liveCounts.length - 1; i++) {
             let current = stats.liveCounts[i];
             let next = stats.liveCounts[i + 1];
-            let duration = next.t - current.t;
 
-            if (duration > 60) continue;
+            // Clip segment to mission window so saturation aligns with mission duration
+            const segStart = Math.max(current.t, satStart);
+            const segEnd = Math.min(next.t, satEnd);
+            let duration = segEnd - segStart;
+
+            if (duration <= 0 || duration > 29) continue;
 
             // Pause Filter
             let isPaused = false;
             if (stats.pauseIntervals) {
                 for (let pause of stats.pauseIntervals) {
-                    if ((current.t < pause.start && next.t > pause.end) ||
-                        (current.t >= pause.start && current.t < pause.end)) {
+                    if ((segStart < pause.start && segEnd > pause.end) ||
+                        (segStart >= pause.start && segStart < pause.end)) {
                         isPaused = true; break;
                     }
                 }
@@ -405,32 +543,10 @@ function renderDashboard(stats) {
             let bucketIndex = Math.floor(current.val / step);
             if (bucketIndex >= numBuckets - 1) bucketIndex = numBuckets - 1; // Clamp to top bucket
 
-            // SATURATION LOGIC & DATA CAPTURE
-            if (stats.isDefense || stats.isInterception) {
-                // Defense/Interception: Trust the count
-                buckets[bucketIndex] += duration;
-                totalTime += duration;
-
-                // NEW: Save for Slider
-                currentSaturationSegments.push({ val: current.val, dur: duration });
-            }
-            else {
-                // Survival: Split into Active vs Drought
-                if (duration > THRESHOLD) {
-                    buckets[bucketIndex] += THRESHOLD;
-                    totalTime += THRESHOLD;
-                    currentSaturationSegments.push({ val: current.val, dur: THRESHOLD });
-
-                    let drought = duration - THRESHOLD;
-                    buckets[0] += drought;
-                    totalTime += drought;
-                    currentSaturationSegments.push({ val: 0, dur: drought });
-                } else {
-                    buckets[bucketIndex] += duration;
-                    totalTime += duration;
-                    currentSaturationSegments.push({ val: current.val, dur: duration });
-                }
-            }
+            // SATURATION LOGIC & DATA CAPTURE (Defense/Interception)
+            buckets[bucketIndex] += duration;
+            totalTime += duration;
+            currentSaturationSegments.push({ val: current.val, dur: duration });
             updateThresholdStat();
         }
 
@@ -795,7 +911,9 @@ function generateReportString(stats) {
     lines.push(`Mission: ${stats.missionName}`);
 
     if (stats.isDefense) {
-        lines.push(`Waves:   ${stats.rounds * 3} (${stats.rounds} Rotations)`);
+        const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(m => stats.missionName.toLowerCase().includes(m.toLowerCase()));
+        const wavesPerRotation = isMirrorNode ? 2 : 3;
+        lines.push(`Waves:   ${stats.rounds * wavesPerRotation} (${stats.rounds} Rotations)`);
     } else {
         lines.push(`Rounds:  ${stats.rounds}`);
     }
@@ -816,7 +934,9 @@ function generateReportString(stats) {
     lines.push(`Enemies/Drone: ${ratio}`);
 
     const rotations = stats.rounds;
-    const rotTotalMean = rotations + (rotations * 0.10 * 3);
+    const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(m => stats.missionName.toLowerCase().includes(m.toLowerCase()));
+    const wavesPerRotation = isMirrorNode ? 2 : 3;
+    const rotTotalMean = rotations + (rotations * 0.10 * wavesPerRotation);
     const meanDrops = droneCount * 0.15;
     const meanVal = (4 * 0.18) + (2 * (1 - 0.18));
     const grandMean = rotTotalMean + (meanDrops * meanVal);
@@ -836,15 +956,47 @@ function generateReportString(stats) {
     lines.push("");
     lines.push("--- Enemy Saturation ---");
 
-    if (stats.liveCounts.length > 0) {
-        let buckets = new Array(11).fill(0);
-        stats.liveCounts.forEach(c => buckets[c >= 50 ? 10 : Math.floor(c / 5)]++);
-        let total = stats.liveCounts.length;
-        for (let i = 0; i < 11; i++) {
-            let label = (i === 10) ? "50+" : `${i * 5}-${(i * 5) + 4}`;
-            let pct = (buckets[i] / total * 100).toFixed(1);
+    // Prefer time-weighted saturation segments (matches dashboard visualization)
+    const STEP = 3;
+    const MAX_VAL = 30; // top bucket will show `27+`
+    const NUM_BUCKETS = Math.ceil(MAX_VAL / STEP);
+
+    if (currentSaturationSegments && currentSaturationSegments.length > 0) {
+        let buckets = new Array(NUM_BUCKETS).fill(0);
+        let totalDur = 0;
+
+        for (let seg of currentSaturationSegments) {
+            let idx = Math.floor(seg.val / STEP);
+            if (idx >= NUM_BUCKETS - 1) idx = NUM_BUCKETS - 1; // clamp to top bucket
+            buckets[idx] += seg.dur;
+            totalDur += seg.dur;
+        }
+
+        for (let i = 0; i < NUM_BUCKETS; i++) {
+            const start = i * STEP;
+            const end = (i * STEP) + (STEP - 1);
+            const label = (i === NUM_BUCKETS - 1) ? `${start}+` : `${start}-${end}`;
+            const pct = totalDur > 0 ? (buckets[i] / totalDur * 100).toFixed(1) : "0.0";
             lines.push(`${label.padEnd(8)} : ${pct.padStart(5)}%`);
         }
+
+    } else if (stats.liveCounts && stats.liveCounts.length > 0) {
+        // Fallback: if segments unavailable, bucket raw samples using same STEP
+        let buckets = new Array(NUM_BUCKETS).fill(0);
+        stats.liveCounts.forEach(c => {
+            let idx = Math.floor(c / STEP);
+            if (idx >= NUM_BUCKETS - 1) idx = NUM_BUCKETS - 1;
+            buckets[idx]++;
+        });
+        let total = stats.liveCounts.length;
+        for (let i = 0; i < NUM_BUCKETS; i++) {
+            const start = i * STEP;
+            const end = (i * STEP) + (STEP - 1);
+            const label = (i === NUM_BUCKETS - 1) ? `${start}+` : `${start}-${end}`;
+            const pct = total > 0 ? (buckets[i] / total * 100).toFixed(1) : "0.0";
+            lines.push(`${label.padEnd(8)} : ${pct.padStart(5)}%`);
+        }
+
     } else {
         lines.push("No live enemy count data found.");
     }
