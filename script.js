@@ -88,6 +88,7 @@ async function processFile(file) {
 
 async function parseFileStream(file) {
     const CHUNK_SIZE = 1024 * 1024 * 10; 
+    let lastYieldTime = performance.now();
     let offset = 0;
     let leftover = "";
     
@@ -176,7 +177,7 @@ async function parseFileStream(file) {
             
             const mMission = line.match(p_overlay);
             if (mMission) {
-                let name = mMission[1].trim();
+                let name = (' ' + mMission[1].trim()).slice(1);
                 if (name.includes("Arbitration")) {
                     
                     if (timestamp > 0 && current.lastActivityTime > 0 && timestamp < current.lastActivityTime) {
@@ -282,14 +283,14 @@ async function parseFileStream(file) {
                 
                 const mAgentFull = line.match(p_agent_full);
                 if (mAgentFull) {
-                    const agentName = mAgentFull[1];
+                    const agentName = (' ' + mAgentFull[1]).slice(1);
                     const tick = parseInt(mAgentFull[3]);
                     current.allSpawns.push({ name: agentName, tick: isNaN(tick) ? null : tick });
                 } else {
                     
                     const mNpc = line.match(/\/Npc\/([A-Za-z0-9_]+)/);
                     if (mNpc) {
-                        current.allSpawns.push({ name: mNpc[1], tick: null });
+                        current.allSpawns.push({ name: (' ' + mNpc[1]).slice(1), tick: null });
                     } else {
                         current.allSpawns.push({ name: null, tick: null });
                     }
@@ -309,9 +310,11 @@ async function parseFileStream(file) {
         
         let pct = Math.min(100, (offset / file.size) * 100).toFixed(0);
         statusDiv.textContent = `Analyzing... ${pct}%`;
-        
-        
-        await new Promise(r => setTimeout(r, 0));
+
+        if (performance.now() - lastYieldTime > 30) {
+            await new Promise(r => setTimeout(r, 0));
+            lastYieldTime = performance.now();
+        }
     }
 
     
