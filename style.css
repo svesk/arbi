@@ -24,13 +24,13 @@ body {
 .container { max-width: 1000px; width: 100%; }
 .hidden { display: none !important; }
 
-/* UPDATED: Strict Grid Alignment */
+
 .row { 
     display: flex; 
     gap: 20px; 
     margin-bottom: 20px; 
     flex-wrap: wrap;
-    align-items: stretch; /* Forces all columns in a row to match the tallest one */
+    align-items: stretch; 
 }
 
 .col { 
@@ -40,7 +40,7 @@ body {
     flex-direction: column; 
 }
 
-/* HEADER */
+
 .header-section { text-align: center; margin-bottom: 40px; }
 h1 { color: var(--primary); margin: 0; font-size: 2.5rem; letter-spacing: 1px; }
 .subtitle { color: var(--text-muted); margin-top: 5px; }
@@ -79,7 +79,7 @@ h1 { color: var(--primary); margin: 0; font-size: 2.5rem; letter-spacing: 1px; }
     box-shadow: 0 4px 20px rgba(0,0,0,0.3); 
     border: 1px solid #333; 
     
-    /* These lines ensure the panel fills the entire height of the column */
+    
     flex: 1;
     display: flex; 
     flex-direction: column;
@@ -88,32 +88,35 @@ h1 { color: var(--primary); margin: 0; font-size: 2.5rem; letter-spacing: 1px; }
 .panel-title { font-size: 1.1rem; color: var(--text-muted); margin-bottom: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #333; padding-bottom: 10px; }
 .panel-desc { font-size: 0.85rem; color: #888; margin-top: -10px; margin-bottom: 15px; line-height: 1.4; }
 
-/* KPI CARDS */
+
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 15px; margin-bottom: 20px; }
 .kpi-card { background: #252525; padding: 20px; border-radius: 8px; text-align: center; border-left: 4px solid var(--primary); position: relative; }
 .kpi-value { font-size: 2.2rem; font-weight: bold; margin: 5px 0; }
 .kpi-label { color: var(--text-muted); font-size: 0.85rem; font-weight: bold; text-transform: uppercase; }
 .kpi-sub { font-size: 0.8rem; opacity: 0.8; color: var(--accent); }
+.kpi-input-row { margin-top: 12px; border-top: 1px solid #444; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.kpi-input-row label { font-size: 0.75rem; color: #bbbbbb; letter-spacing: 0.5px; text-transform: uppercase; }
+.kpi-input-row input { background: #333; border: 1px solid #555; color: #fff; padding: 6px; border-radius: 4px; text-align: center; font-weight: bold; }
 
-/* TABLE STYLING */
+
 table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 5px; }
 th { text-align: left; color: #888; border-bottom: 1px solid #333; padding: 5px; }
 td { padding: 8px 5px; border-bottom: 1px solid #222; }
 tr:last-child td { border-bottom: none; }
 
-/* LIST STYLING */
+
 .cumulative-list { list-style: none; padding: 0; margin: 0; }
 .cumulative-list li { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #333; font-size: 0.9rem; }
 .cumulative-list li:last-child { border: none; }
 
-/* SATURATION BARS */
+
 .bar-container { margin-bottom: 8px; display: flex; align-items: center; font-size: 0.9rem; }
 .bar-label { width: 60px; font-family: monospace; color: var(--text-muted); }
 .bar-track { flex-grow: 1; background: #333; height: 16px; border-radius: 4px; overflow: hidden; margin: 0 10px; }
 .bar-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.5s ease; }
 .bar-value { width: 45px; text-align: right; font-weight: bold; }
 
-/* WAVE GRID (HEATMAP) */
+
 .wave-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 6px; }
 .wave-box { 
     aspect-ratio: 1; 
@@ -152,7 +155,7 @@ tr:last-child td { border-bottom: none; }
 .spinner { border: 4px solid #333; border-top: 4px solid var(--primary); border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; display: none; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-/* Remove spinners/arrows from number inputs */
+
 input[type=number]::-webkit-inner-spin-button, 
 input[type=number]::-webkit-outer-spin-button { 
   -webkit-appearance: none; 
@@ -163,7 +166,7 @@ input[type=number] {
   -moz-appearance: textfield; 
 }
 
-/* Force the button container to be centered (fallback if layout breaks) */
+
 .results-section .action-buttons,
 #resultsSection > div:last-child {
         display: flex;
@@ -172,10 +175,10 @@ input[type=number] {
         margin-top: 20px;
 }
 
-/* Ensure the primary action buttons container stays centered */
+
 #actionButtons { display:flex; justify-content:center; gap:12px; align-items:center; width:100%; }
 
-/* Make SVG and list containers grow to fill panel space */
+
 #packList {
     flex: 1;
     min-height: 0;
@@ -195,7 +198,7 @@ input[type=number] {
     min-height: 0;
 }
 
-/* Ensure table grows within panel */
+
 table {
     width: 100%;
     border-collapse: collapse;
@@ -204,7 +207,7 @@ table {
     flex: 1;
 }
 
-/* Make any content div inside panel (not title/desc) grow to fill space */
+
 .panel > *:not(.panel-title):not(.panel-desc) {
     min-height: 0;
 }
@@ -215,7 +218,7 @@ table {
     min-height: 0;
 }
 
-/* Leaderboard-specific responsiveness */
+
 .leaderboard-panel .table-wrapper {
     overflow: auto;
     -webkit-overflow-scrolling: touch;
@@ -226,18 +229,18 @@ table {
     .subtitle { font-size: 0.9rem; }
     .panel { padding: 12px; }
 
-    /* Fix button overlap on mobile */
+    
     div[style*="margin-bottom: -30px"] {
         margin-bottom: 20px !important;
     }
 
-    /* Make panel scrollable so page doesn't scale to fit entire content */
+    
     .leaderboard-panel { max-height: calc(100vh - 140px); overflow: auto; }
 
-    /* Limit table wrapper height on small screens only */
+    
     .leaderboard-panel .table-wrapper { max-height: calc(100vh - 180px); }
 
-    /* Convert table into stacked cards for readability */
+    
     .leaderboard-panel table thead { display: none; }
     .leaderboard-panel table, .leaderboard-panel tbody, .leaderboard-panel tr { display: block; width: 100%; }
     .leaderboard-panel tr { margin: 0 0 12px 0; padding: 10px; background: #1a1a1a; border-radius: 8px; }

@@ -5,14 +5,16 @@
 
 # 1) What this program does
 
+![Dashboard UI](assets/UI.png)
+
 * Loads a Warframe EE.log in the browser and scans it without loading the whole file into memory.
 * Finds relevant events (enemy spawns, drone kills, wave/reward times, and world state).
 * Produces easy-to-read stats: total enemies, drones, rounds, run duration, drones-per-minute, and a time-weighted "enemy saturation" breakdown.
 * Estimates expected Vitus (drops) using a simple probabilistic model.
 
-![Dashboard UI](assets/UI.png)
-
 # 2) How the 50% expected Vitus is calculated
+
+![Vitus Table](assets/vitus.png)
 
 The expected Vitus is calculated using 4 variables:
 
@@ -69,9 +71,9 @@ By using standard Z-Scores (fixed statistical multipliers), we can find the exac
 * **1% God Roll:** `E + (2.326 * σ)`  >>> You are insanely lucky. Only 1 in 100 runs will drop more than this.
 * **99% Worst Case:** `E + (-2.326 * σ)`  >>> You got robbed by RNG. 99 out of 100 runs will drop more than this.
 
-![Vitus Table](assets/vitus.png)
-
 # 4) How enemy saturation is measured
+
+![Enemy Saturation Graph](assets/saturation.png)
 
 Enemy saturation measures how "full" the map is during your run. The dashboard derives saturation from the EE.log's `MonitoredTicking` lines and time-weighted segments.
 
@@ -89,8 +91,6 @@ Segments are time-weighted and placed into 3-enemy buckets (`0–2`, `3–5`, `6
 
 *Why this matters:* A high percentage in upper buckets means the map spends more time near the cap (throttling spawns and reaching the drone cap); a low percentage means you are keeping the map clear for optimized drone spawns.
 
-![Enemy Saturation Graph](assets/saturation.png)
-
 # 5) How start/end times and rounds are determined
 
 * **Start time:** The analyzer prefers a clear in-game marker (Wave 1 or Interception start). If that is missing, it falls back to the first drone event or a safe approximation.
@@ -100,8 +100,8 @@ Segments are time-weighted and placed into 3-enemy buckets (`0–2`, `3–5`, `6
 
 # 6) How total enemies are counted (strict approach)
 
+![Enemy Count UI](assets/count.png)
+
 * Every time a new enemy is logged, the tool tries to count it as a real, unique enemy.
 * To avoid inflating the numbers, it checks if that spawn type contributes to the `MonitoredTicking` counter or not. If not, it assumes that spawn is a non-enemy and doesn't count it as an enemy spawn.
 * This careful method means the enemy count you see is exclusively every non-ally/killable enemy.
-
-![Enemy Count UI](assets/count.png)

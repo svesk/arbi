@@ -1,11 +1,10 @@
-// --- CONSTANTS ---
 let currentSaturationSegments = [];
 const DROP_CHANCE = 0.15;
 const RETRIEVER_CHANCE = 0.18;
-// --- MIRROR DEFENSE MAPS (Saturation Under Maintenance) - REMOVABLE FLAG ---
+
 const MIRROR_DEFENSE_MAPS = ['Munio', 'Tyana'];
-const DISABLE_SATURATION_FOR_MIRROR_DEFENSE = false; // mirror defense saturation enabled for maps listed below
-// --- END REMOVABLE SECTION ---
+const DISABLE_SATURATION_FOR_MIRROR_DEFENSE = false; 
+
 const SCENARIOS = [
     { z: -2.326, prob: "99%", desc: "Worst Case" },
     { z: -1.282, prob: "90%", desc: "Unlucky" },
@@ -16,7 +15,7 @@ const SCENARIOS = [
     { z: 2.326, prob: " 1%", desc: "God Roll" }
 ];
 
-// --- UI ELEMENTS ---
+
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 const statusDiv = document.getElementById('status');
@@ -27,11 +26,18 @@ const downloadBtn = document.getElementById('downloadBtn');
 const sectionWaveMap = document.getElementById('sectionWaveMap');
 const waveMapPanel = document.getElementById('waveMapPanel');
 const missionBadge = document.getElementById('missionBadge');
+const vitusPerMinuteValue = document.getElementById('kpiVitusPerMinute');
+const vitusPerMinuteDetail = document.getElementById('kpiVitusPerMinuteDetail');
+const kpiDurationSub = document.getElementById('kpiDurationSub');
+const vitusKpiInput = document.getElementById('kpiActualVitusInput');
+const vitusPanelInput = document.getElementById('actualVitusInput');
 
 let inputFileName = "EE.log";
 let currentStats = null;
+let currentRunDurationSeconds = 0;
+let syncingVitusInputs = false;
 
-// --- EVENTS ---
+
 dropZone.onclick = () => fileInput.click();
 dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
 dropZone.ondragleave = () => dropZone.classList.remove('dragover');
@@ -42,14 +48,14 @@ dropZone.ondrop = (e) => {
 };
 fileInput.onchange = (e) => { if (e.target.files.length) processFile(e.target.files[0]); };
 
-// --- MAIN ---
+
 async function processFile(file) {
     inputFileName = file.name.replace(/\.[^/.]+$/, "");
     spinner.style.display = 'block';
     dropZone.style.display = 'none';
 
     try {
-        // Stream Process: Reads and analyzes simultaneously to save RAM
+        
         const stats = await parseFileStream(file); 
         currentStats = stats;
         renderDashboard(stats);
@@ -65,7 +71,7 @@ async function processFile(file) {
         spinner.style.display = 'none';
         dropZone.style.display = 'block';
         
-        // Specific help for permission/read errors
+        
         if (error.name === "NotReadableError") {
             statusDiv.innerHTML = "<b>Error:</b> File is locked!<br>The game is currently writing to this file.<br>Please <b>copy</b> the EE.log to your Desktop and upload the copy.";
             statusDiv.style.color = "#ff5252";
@@ -79,13 +85,13 @@ async function processFile(file) {
     }
 }
 
-// --- STREAMING ANALYZER (Replaces Cleaner & Analyzer) ---
+
 async function parseFileStream(file) {
-    const CHUNK_SIZE = 1024 * 1024 * 10; // Read in 10MB chunks
+    const CHUNK_SIZE = 1024 * 1024 * 10; 
     let offset = 0;
     let leftover = "";
     
-    // --- STATE MANAGEMENT ---
+    
     let sessions = [];
     
     const createStats = () => ({
@@ -106,21 +112,21 @@ async function parseFileStream(file) {
         currentPauseStart: null,
         currentSimCap: 32,
         preciseStartTime: null,
-        // collected raw spawn records for strict non-ticking analysis (ported from exc/spawns.py)
-        allSpawns: [] // { name: string, tick: number | null }
+        
+        allSpawns: [] 
     });
     
     let current = createStats();
 
-    // Agents to force-count even if analysis suggests they don't tick
+    
     const FORCED_VALID_AGENTS = new Set([
         "CorpusEliteShieldDroneAgent"
     ]);
 
-    // --- REGEX PATTERNS (Compiled once for speed) ---
+    
     const p_overlay = /Script \[Info\]: ThemedSquadOverlay\.lua: Mission name: (.*)/;
     const p_agent = /OnAgentCreated/;
-    // Attempt to capture agent name and MonitoredTicking when present
+    
     const p_agent_full = /OnAgentCreated.*?\/Npc\/(.+?)(\d+)\s+.*?MonitoredTicking\s+(\d+)/;
     const p_drone = /OnAgentCreated.*?CorpusEliteShieldDroneAgent/;
     const p_excludedAgents = /(Replicant|RJCrew|petavatar|VoidClone|Turret|Dropship|CatbrowPetAgent|AllyAgent)/i;
@@ -134,17 +140,17 @@ async function parseFileStream(file) {
     const p_waveDef = /^(\d+\.\d+).*WaveDefend\.lua: Defense wave: (\d+)/;
     const p_timestamp = /^(\d+\.\d+)/;
 
-    // --- READ LOOP ---
+    
     while (offset < file.size) {
-        // 1. Read a chunk
+        
         const slice = file.slice(offset, offset + CHUNK_SIZE);
         const text = await slice.text();
         
-        // 2. Handle line breaks across chunks
+        
         const currentData = leftover + text;
         let lastIdx = currentData.lastIndexOf('\n');
         
-        // If EOF, force process everything
+        
         if (offset + CHUNK_SIZE >= file.size && lastIdx === -1) {
              lastIdx = currentData.length; 
         }
@@ -152,27 +158,27 @@ async function parseFileStream(file) {
         const chunk = lastIdx !== -1 ? currentData.substring(0, lastIdx) : "";
         leftover = lastIdx !== -1 ? currentData.substring(lastIdx + 1) : currentData;
 
-        // 3. Process Lines Immediately (No giant string storage)
+        
         const lines = chunk.split(/\r?\n/);
         for (let line of lines) {
             if (!line) continue;
             
-            // Optimization: Skip spam lines early
+            
             let isSpam = false;
             if (line.includes("Game [Warning]:") || line.includes("DamagePct")) isSpam = true;
             if (isSpam) continue;
 
-            // --- ANALYSIS LOGIC ---
+            
             let timestamp = 0;
             const tsMatch = line.match(p_timestamp);
             if (tsMatch) timestamp = parseFloat(tsMatch[1]);
 
-            // Mission Start
+            
             const mMission = line.match(p_overlay);
             if (mMission) {
                 let name = mMission[1].trim();
                 if (name.includes("Arbitration")) {
-                    // Check if previous session was stale/invalid or just starting
+                    
                     if (timestamp > 0 && current.lastActivityTime > 0 && timestamp < current.lastActivityTime) {
                         continue;
                     }
@@ -180,11 +186,11 @@ async function parseFileStream(file) {
                     current = createStats();
                     current.missionName = name.replace("Arbitration:", "").trim();
 
-                    // --- EARLY MISSION-TYPE DETECTION ---
-                    // If mission name contains 'Defense' or 'Interception' mark the
-                    // session accordingly *immediately* so MonitoredTicking lines
-                    // (which can appear before 'Defense wave: 1') are treated
-                    // using the strict defense/interception logic (no live-fallback).
+                    
+                    
+                    
+                    
+                    
                     const mNameLower = current.missionName.toLowerCase();
                     if (mNameLower.includes('defense')) {
                         current.isDefense = true;
@@ -192,9 +198,9 @@ async function parseFileStream(file) {
                         current.isInterception = true;
                     }
 
-                    // ALSO: Mirror Defense nodes are sometimes identified only by
-                    // the node name (e.g. 'Munio', 'Alator', 'Tyana'). Ensure these
-                    // are treated as Defense so MonitoredTicking is applied.
+                    
+                    
+                    
                     if (!current.isDefense && Array.isArray(MIRROR_DEFENSE_MAPS)) {
                         const nodeMatch = MIRROR_DEFENSE_MAPS.some(m => current.missionName.toLowerCase().includes(m.toLowerCase()));
                         if (nodeMatch) current.isDefense = true;
@@ -205,7 +211,7 @@ async function parseFileStream(file) {
                 continue;
             }
 
-            // Pause Logic
+            
             if (p_sleep.test(line) || p_reward_def.test(line)) {
                 if (current.currentPauseStart === null && timestamp > 0) current.currentPauseStart = timestamp;
             }
@@ -231,7 +237,7 @@ async function parseFileStream(file) {
                 }
             }
 
-            // Round Counting (Defense / Interception only)
+            
             let isRoundEvent = false;
             if (p_reward_def.test(line)) isRoundEvent = true;
             if (isRoundEvent) {
@@ -251,13 +257,13 @@ async function parseFileStream(file) {
             let dataPoint = null;
             const mMonitored = line.match(p_monitored);
 
-            // Only use MonitoredTicking for Defense / Interception (Mirror Defense marked as Defense)
+            
             if ((current.isDefense || current.isInterception) && mMonitored) {
                 dataPoint = { t: timestamp, val: parseInt(mMonitored[1]), cap: current.currentSimCap };
             }
             if (dataPoint && timestamp) current.liveCounts.push(dataPoint);
 
-            // Gameplay Data
+            
             if (p_drone.test(line)) {
                 current.droneKills++;
                 current.hasData = true;
@@ -266,21 +272,21 @@ async function parseFileStream(file) {
                     current.lastActivityTime = Math.max(current.lastActivityTime, timestamp);
                 }
             } else if (p_agent.test(line)) {
-                // Exclude certain agents from strict spawn counts but keep line for saturation
+                
                 const isExcludedAgent = p_excludedAgents.test(line);
                 if (isExcludedAgent) continue;
 
-                // Basic increment for compatibility
+                
                 current.enemySpawns++;
 
-                // Attempt to capture detailed spawn info (name + MonitoredTicking) similar to exc/spawns.py
+                
                 const mAgentFull = line.match(p_agent_full);
                 if (mAgentFull) {
                     const agentName = mAgentFull[1];
                     const tick = parseInt(mAgentFull[3]);
                     current.allSpawns.push({ name: agentName, tick: isNaN(tick) ? null : tick });
                 } else {
-                    // Fallback: try to extract name only
+                    
                     const mNpc = line.match(/\/Npc\/([A-Za-z0-9_]+)/);
                     if (mNpc) {
                         current.allSpawns.push({ name: mNpc[1], tick: null });
@@ -300,18 +306,18 @@ async function parseFileStream(file) {
 
         offset += CHUNK_SIZE;
         
-        // Update UI Progress
+        
         let pct = Math.min(100, (offset / file.size) * 100).toFixed(0);
         statusDiv.textContent = `Analyzing... ${pct}%`;
         
-        // Critical: Yield to UI thread to prevent browser freeze
+        
         await new Promise(r => setTimeout(r, 0));
     }
 
-    // --- FINALIZE ---
+    
     if (current.hasData || current.missionName !== "Unknown Node") sessions.push(current);
 
-    // Pick best session
+    
     let bestSession = null;
     for (let i = sessions.length - 1; i >= 0; i--) {
         const s = sessions[i];
@@ -320,17 +326,17 @@ async function parseFileStream(file) {
 
     const chosen = bestSession || sessions[sessions.length - 1] || createStats();
 
-    // --- STRICT Non-Ticking Agent Analysis (ported from exc/spawns.py) ---
-    // NOTE: This block performs a strict *counting* filter for enemySpawns only.
-    // It MUST NOT alter `liveCounts` or `currentSaturationSegments` (saturation
-    // must always be driven by raw MonitoredTicking samples). To be defensive,
-    // we temporarily preserve saturation input and restore it after the analysis.
+    
+    
+    
+    
+    
     try {
-        // Preserve saturation inputs (no-op restore ensures saturation unchanged)
+        
         const _preservedLiveCounts = (chosen && Array.isArray(chosen.liveCounts)) ? chosen.liveCounts.slice() : [];
 
         if (chosen && Array.isArray(chosen.allSpawns) && chosen.allSpawns.length > 0) {
-            // Only consider named spawns
+            
             const named = chosen.allSpawns.filter(s => s.name !== null && s.name !== undefined);
 
             const confirmedTicking = new Set();
@@ -349,7 +355,7 @@ async function parseFileStream(file) {
             const initialNonTicking = Array.from(suspectedNonTicking).filter(x => !confirmedTicking.has(x));
             const trueNonTicking = new Set(initialNonTicking.filter(x => !FORCED_VALID_AGENTS.has(x)));
 
-            // Recalculate valid spawn count excluding true non-ticking agents
+            
             let validSpawns = 0;
             for (let sp of chosen.allSpawns) {
                 if (!sp.name) { validSpawns++; continue; }
@@ -360,7 +366,7 @@ async function parseFileStream(file) {
             chosen.trueNonTickingAgents = Array.from(trueNonTicking);
         }
 
-        // Restore preserved saturation inputs to guarantee no side-effects
+        
         if (chosen) chosen.liveCounts = _preservedLiveCounts;
     } catch (e) {
         console.warn('Non-ticking agent analysis failed:', e);
@@ -376,20 +382,20 @@ async function parseFileStream(file) {
 }
 
 
-// --- RENDER ---
+
 function renderDashboard(stats) {
-    // Reset saturation segments for each new file to avoid leaking previous data
+    
     currentSaturationSegments = [];
     document.getElementById('missionNodeDisplay').textContent = stats.missionName;
 
-    // --- CHECK IF MIRROR DEFENSE MAP (Saturation Under Maintenance) ---
+    
     let isMirrorDefense = false;
     if (DISABLE_SATURATION_FOR_MIRROR_DEFENSE) {
         isMirrorDefense = MIRROR_DEFENSE_MAPS.some(map => stats.missionName.includes(map));
     }
-    // --- END REMOVABLE SECTION ---
+    
 
-    // Determine if this node is a mirror-defense map (e.g. Munio, Tyana)
+    
     const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(m => stats.missionName.toLowerCase().includes(m.toLowerCase()));
 
     if (stats.isDefense) {
@@ -397,7 +403,7 @@ function renderDashboard(stats) {
         missionBadge.style.background = "#ffaa00";
         missionBadge.style.color = "#000";
         if (waveMapPanel) {
-            // Hide the Wave Clear Map for mirror-defense nodes to prevent showing an invalid map
+            
             if (isMirrorNode) {
                 waveMapPanel.classList.add('hidden');
                 const wg = document.getElementById('waveGrid');
@@ -413,7 +419,7 @@ function renderDashboard(stats) {
         if (waveMapPanel) waveMapPanel.classList.add('hidden');
     }
 
-    // KPI: Drones & Manual Input
+    
     document.getElementById('kpiDrones').textContent = stats.droneKills.toLocaleString();
     const totalEnemies = stats.enemySpawns + stats.droneKills;
     document.getElementById('kpiEnemySpawns').textContent = totalEnemies.toLocaleString();
@@ -438,7 +444,7 @@ function renderDashboard(stats) {
         updateKillsPerDrone(countToUse);
     };
 
-    // KPI: Intervals
+    
     let intervals = [];
     if (stats.droneTimestamps.length > 1) {
         for (let i = 1; i < stats.droneTimestamps.length; i++) {
@@ -450,46 +456,37 @@ function renderDashboard(stats) {
         document.getElementById('kpiDroneInterval').textContent = "N/A";
     }
 
-    // KPI: Run Duration & Pace
+    
     const startTime = stats.startTime || stats.droneTimestamps[0] || 0;
     const endTime = stats.lastActivityTime || 0;
-    const durationSeconds = Math.max(0, endTime - startTime);
+    currentRunDurationSeconds = Math.max(0, endTime - startTime);
+    updateVitusPerMinuteDisplay();
 
-    if (durationSeconds >= 3600) {
-        const durationHours = Math.floor(durationSeconds / 3600);
-        const durationMinutes = Math.floor((durationSeconds % 3600) / 60);
-        const durationRemainder = Math.floor(durationSeconds % 60);
-        document.getElementById('kpiRealDuration').textContent = `${durationHours}h ${durationMinutes}m ${durationRemainder}s`;
-    } else {
-        const durationMinutes = Math.floor(durationSeconds / 60);
-        const durationRemainder = Math.floor(durationSeconds % 60);
-        document.getElementById('kpiRealDuration').textContent = `${durationMinutes}m ${durationRemainder}s`;
-    }
-
-    // KPI: Duration
+    
     if (stats.isDefense) {
-        // Mirror Defense uses 2 waves per rotation; standard Defense uses 3
+        
         const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(m => stats.missionName.toLowerCase().includes(m.toLowerCase()));
         const wavesPerRotation = isMirrorNode ? 2 : 3;
-        document.getElementById('kpiDurationLabel').textContent = "Total Waves";
-        document.getElementById('kpiDuration').textContent = stats.rounds * wavesPerRotation;
-        document.getElementById('kpiDuration').nextElementSibling.textContent = `(${stats.rounds} Rotations)`;
+        const totalWaves = stats.rounds * wavesPerRotation;
+        document.getElementById('kpiDurationLabel').textContent = "Total Duration";
+        document.getElementById('kpiDuration').textContent = formatRunDuration(currentRunDurationSeconds);
+        document.getElementById('kpiDurationSub').innerHTML = `Total waves: ${totalWaves} waves<br>${stats.rounds} rotations`;
     } else {
-        document.getElementById('kpiDurationLabel').textContent = "Total Rounds";
-        document.getElementById('kpiDuration').textContent = stats.rounds;
-        document.getElementById('kpiDuration').nextElementSibling.textContent = "Interception Rounds";
+        document.getElementById('kpiDurationLabel').textContent = "Total Duration";
+        document.getElementById('kpiDuration').textContent = formatRunDuration(currentRunDurationSeconds);
+        document.getElementById('kpiDurationSub').textContent = `Total rounds: ${stats.rounds} rounds`;
     }
 
     updateVitusTable(stats.droneKills, stats.rounds);
 
-    // --- Saturation (Dynamic Anomaly + Pause Filter + Capacity Logic V2) ---
+    
     let barHTML = "";
 
-    // Mission-aligned window for saturation calculations
+    
     const satStart = startTime || 0;
     const satEnd = endTime || 0;
 
-    // 1. Calculate Mission "Heartbeat" (Median Interval)
+    
     let allIntervals = [];
     if (stats.liveCounts.length > 1) {
         for (let i = 0; i < stats.liveCounts.length - 1; i++) {
@@ -500,14 +497,14 @@ function renderDashboard(stats) {
     allIntervals.sort((a, b) => a - b);
     let median = allIntervals.length > 0 ? allIntervals[Math.floor(allIntervals.length / 2)] : 1.0;
 
-    // 2. Define "Drought Threshold"
+    
     const THRESHOLD = Math.max(1.0, median * 8);
 
-    // 3. Build Graph (Adaptive Resolution)
+    
     if (stats.liveCounts.length > 1) {
 
-        // A. DETERMINE RESOLUTION
-        // Defense/Interception (including Mirror Defense): Cap is ~30; use step 3.
+        
+        
         let step = 3;
         let maxVal = 30;
         let numBuckets = Math.ceil(maxVal / step);
@@ -515,19 +512,19 @@ function renderDashboard(stats) {
         let buckets = new Array(numBuckets).fill(0);
         let totalTime = 0;
 
-        // B. FILL BUCKETS
+        
         for (let i = 0; i < stats.liveCounts.length - 1; i++) {
             let current = stats.liveCounts[i];
             let next = stats.liveCounts[i + 1];
 
-            // Clip segment to mission window so saturation aligns with mission duration
+            
             const segStart = Math.max(current.t, satStart);
             const segEnd = Math.min(next.t, satEnd);
             let duration = segEnd - segStart;
 
             if (duration <= 0 || duration > 29) continue;
 
-            // Pause Filter
+            
             let isPaused = false;
             if (stats.pauseIntervals) {
                 for (let pause of stats.pauseIntervals) {
@@ -539,18 +536,18 @@ function renderDashboard(stats) {
             }
             if (isPaused) continue;
 
-            // Dynamic Index Calculation
+            
             let bucketIndex = Math.floor(current.val / step);
-            if (bucketIndex >= numBuckets - 1) bucketIndex = numBuckets - 1; // Clamp to top bucket
+            if (bucketIndex >= numBuckets - 1) bucketIndex = numBuckets - 1; 
 
-            // SATURATION LOGIC & DATA CAPTURE (Defense/Interception)
+            
             buckets[bucketIndex] += duration;
             totalTime += duration;
             currentSaturationSegments.push({ val: current.val, dur: duration });
             updateThresholdStat();
         }
 
-        // C. RENDER BARS (With Adaptive Labels & Gradient)
+        
         buckets.forEach((duration, i) => {
             let start = i * step;
             let end = (i * step) + (step - 1);
@@ -573,7 +570,7 @@ function renderDashboard(stats) {
                 <div class="bar-value">${pct}%</div>
             </div>`;
         });
-        // --- MIRROR DEFENSE MAPS CHECK (Saturation Under Maintenance) ---
+        
         if (isMirrorDefense) {
             document.getElementById('saturationBars').innerHTML = "";
             const satContainer = document.getElementById('saturationStatContainer');
@@ -589,13 +586,13 @@ function renderDashboard(stats) {
         } else {
             document.getElementById('saturationBars').innerHTML = barHTML;
         }
-        // --- END REMOVABLE SECTION ---
+        
 
     } else {
         document.getElementById('saturationBars').innerHTML = "<div style='text-align:center; color:#666; padding:20px;'>No Live data found in log.</div>";
     }
 
-    // Wave Grid
+    
     if (stats.isDefense) {
         let waves = Object.keys(stats.waveStarts).map(Number).sort((a, b) => a - b);
         let waveGridHTML = "";
@@ -617,7 +614,7 @@ function renderDashboard(stats) {
         }
     }
 
-    // Packs & Rotation Efficiency (Graph + Grid)
+    
     if (stats.droneTimestamps.length > 1) {
         const graphEl = document.getElementById('packList');
 
@@ -626,10 +623,10 @@ function renderDashboard(stats) {
             graphEl.parentElement.querySelector('.panel-desc').textContent = "Line graph for DPM per rotation, alongside average DPM throughout the full run. (Pre-buffing timer is counted for round 1)";
         }
 
-        // 1. Calculate DPM
+        
         let dataPoints = [];
         if (stats.rewardTimestamps && stats.rewardTimestamps.length > 0) {
-            // SAFETY: Resolve a reliable start time even when logs miss timestamps
+            
             let startTime = 0;
             if (stats.preciseStartTime) {
                 startTime = stats.preciseStartTime;
@@ -657,7 +654,7 @@ function renderDashboard(stats) {
             }
         }
 
-        // 2. Render Graph
+        
         if (dataPoints.length > 1) {
             const w = 405, h = 220;
             const margin = { top: 20, right: 20, bottom: 25, left: 35 };
@@ -670,7 +667,7 @@ function renderDashboard(stats) {
             const maxVal = Math.ceil(realMax);
             const range = maxVal - minVal || 1;
 
-            // A. Main Data Line
+            
             let pathD = "";
             dataPoints.forEach((val, i) => {
                 const x = (i / (dataPoints.length - 1)) * graphW;
@@ -679,12 +676,12 @@ function renderDashboard(stats) {
                 pathD += `${i === 0 ? 'M' : 'L'} ${x},${y} `;
             });
 
-            // B. Average Line
+            
             const avgVal = dataPoints.reduce((a, b) => a + b, 0) / dataPoints.length;
             const avgNorm = (avgVal - minVal) / range;
             const avgY = graphH - (avgNorm * graphH);
 
-            // C. Y-Axis Grid
+            
             let yGridHTML = "";
             let yStep = 1;
             if (stats.isDefense) {
@@ -702,7 +699,7 @@ function renderDashboard(stats) {
                 `;
             }
 
-            // D. X-Axis Labels
+            
             const lastIdx = dataPoints.length - 1;
             let xLabelHTML = "";
             const stride = stats.isDefense ? 5 : 1;
@@ -714,17 +711,17 @@ function renderDashboard(stats) {
                 }
             });
 
-            // E. Interactive Points (Hitboxes)
+            
             let pointsHTML = "";
             dataPoints.forEach((val, i) => {
                 const x = (i / lastIdx) * graphW;
                 const normalized = (val - minVal) / range;
                 const y = graphH - (normalized * graphH);
 
-                // Visible Dot
+                
                 pointsHTML += `<circle cx="${x}" cy="${y}" r="2" fill="#ffcc33" stroke="none"></circle>`;
 
-                // Invisible Hitbox (Stores data for JS)
+                
                 pointsHTML += `<circle class="graph-point" cx="${x}" cy="${y}" r="8" fill="transparent" 
                                 data-val="${val.toFixed(1)}" data-rot="${i + 1}" 
                                 data-x="${x}" data-y="${y}" style="cursor:pointer;"></circle>`;
@@ -745,16 +742,16 @@ function renderDashboard(stats) {
                 </div>
             `;
 
-            // 3. Attach Custom Tooltip Logic 
+            
             setTimeout(() => {
                 const container = document.getElementById('packList');
                 if (container) {
-                    // Create shared tooltip element
+                    
                     const tip = document.createElement('div');
                     tip.style.cssText = "position:absolute; pointer-events:none; background:#000; color:#fff; padding:5px 10px; border:1px solid #555; border-radius:4px; font-size:0.8rem; white-space:nowrap; display:none; transform:translate(-50%, -130%); z-index:100; top:0; left:0;";
                     container.appendChild(tip);
 
-                    // Add Hover Listeners to Hitboxes
+                    
                     container.querySelectorAll('.graph-point').forEach(pt => {
                         pt.addEventListener('mouseenter', () => {
                             tip.innerText = `Rotation ${pt.dataset.rot}: ${pt.dataset.val} DPM`;
@@ -774,7 +771,7 @@ function renderDashboard(stats) {
         }
 
 
-        // --- B. EFFICIENCY PER ROTATION (PRESERVED) ---
+        
         let dronesPerRound = [];
         let droneIdx = 0;
 
@@ -809,13 +806,13 @@ function renderDashboard(stats) {
                 let color = '#fff';
 
                 if (count === maxVal) {
-                    color = '#00ff22'; // Gold for highest
+                    color = '#00ff22'; 
                 } else if (count === Math.max(...dronesPerRound.filter(v => v !== maxVal))) {
-                    color = '#00e676'; // Full green for second highest
+                    color = '#00e676'; 
                 } else {
-                    // Gradient: interpolate between red (0) and green (1)
+                    
                     const normalized = (count - minVal) / range;
-                    const hue = normalized * 120; // 0 = red, 120 = green
+                    const hue = normalized * 120; 
                     color = `hsl(${hue}, 100%, 50%)`;
                 }
                 return { count, color, idx };
@@ -841,7 +838,7 @@ function renderDashboard(stats) {
         listEl.innerHTML = outputHTML;
     }
 }
-// --- HELPER ---
+
 function updateVitusTable(droneCount, rounds) {
     const p = DROP_CHANCE;
     const meanVal = (4 * RETRIEVER_CHANCE) + (2 * (1 - RETRIEVER_CHANCE));
@@ -902,7 +899,7 @@ function updateVitusTable(droneCount, rounds) {
     }
 }
 
-// --- DOWNLOAD ---
+
 function generateReportString(stats) {
     if (!stats) return "No analysis data available.";
 
@@ -918,7 +915,7 @@ function generateReportString(stats) {
         lines.push(`Rounds:  ${stats.rounds}`);
     }
 
-    // Handle Manual Override logic for Drones
+    
     const manualInput = document.getElementById('manualDroneInput');
     let droneCount = stats.droneKills;
     if (manualInput && manualInput.value) {
@@ -956,9 +953,9 @@ function generateReportString(stats) {
     lines.push("");
     lines.push("--- Enemy Saturation ---");
 
-    // Prefer time-weighted saturation segments (matches dashboard visualization)
+    
     const STEP = 3;
-    const MAX_VAL = 30; // top bucket will show `27+`
+    const MAX_VAL = 30; 
     const NUM_BUCKETS = Math.ceil(MAX_VAL / STEP);
 
     if (currentSaturationSegments && currentSaturationSegments.length > 0) {
@@ -967,7 +964,7 @@ function generateReportString(stats) {
 
         for (let seg of currentSaturationSegments) {
             let idx = Math.floor(seg.val / STEP);
-            if (idx >= NUM_BUCKETS - 1) idx = NUM_BUCKETS - 1; // clamp to top bucket
+            if (idx >= NUM_BUCKETS - 1) idx = NUM_BUCKETS - 1; 
             buckets[idx] += seg.dur;
             totalDur += seg.dur;
         }
@@ -981,7 +978,7 @@ function generateReportString(stats) {
         }
 
     } else if (stats.liveCounts && stats.liveCounts.length > 0) {
-        // Fallback: if segments unavailable, bucket raw samples using same STEP
+        
         let buckets = new Array(NUM_BUCKETS).fill(0);
         stats.liveCounts.forEach(c => {
             let idx = Math.floor(c / STEP);
@@ -1043,7 +1040,7 @@ downloadBtn.onclick = () => {
     URL.revokeObjectURL(url);
 };
 
-// --- SCREENSHOT FUNCTION ---
+
 async function copyToClipboard() {
     const element = document.getElementById("dashboard");
 
@@ -1059,14 +1056,14 @@ async function copyToClipboard() {
             ignoreElements: (el) => el.id === 'actionButtons',
 
             onclone: (clonedDoc) => {
-                // 1. Handle MANUAL DRONE INPUT
+                
                 const manualInput = clonedDoc.getElementById('manualDroneInput');
                 if (manualInput) {
                     if (!manualInput.value) {
-                        // If empty, hide it for a cleaner report
+                        
                         manualInput.parentElement.style.display = "none";
                     } else {
-                        // If user typed a number, render a Centered Box
+                        
                         const box = clonedDoc.createElement("div");
                         box.innerText = manualInput.value;
 
@@ -1110,7 +1107,24 @@ async function copyToClipboard() {
                     vitusInput.parentNode.replaceChild(box, vitusInput);
                 }
 
-                // 3. Handle SATURATION INPUT - Clean Visual for Screenshot
+                const vitusKpiBox = clonedDoc.getElementById('kpiActualVitusInput');
+                if (vitusKpiBox) {
+                    const box = clonedDoc.createElement("div");
+                    box.innerText = vitusKpiBox.value || "-";
+                    box.style.cssText = `
+                        background: #1a1a1a;
+                        border: 1px solid #444;
+                        color: #fff;
+                        border-radius: 4px;
+                        width: 100%;
+                        padding: 6px 0;
+                        text-align: center;
+                        font-weight: bold;
+                    `;
+                    vitusKpiBox.parentNode.replaceChild(box, vitusKpiBox);
+                }
+
+                
                 const saturationContainer = clonedDoc.getElementById('saturationStatContainer');
                 const saturationInput = clonedDoc.getElementById('saturationThreshold');
                 const resultText = clonedDoc.getElementById('thresholdResult');
@@ -1143,7 +1157,7 @@ async function copyToClipboard() {
                     saturationContainer.parentNode.replaceChild(cleanBox, saturationContainer);
                 }
 
-                // Add watermark at bottom
+                
                 const watermark = clonedDoc.createElement("div");
                 watermark.style.cssText = `
                     text-align: center;
@@ -1191,49 +1205,118 @@ function getNormalCDF(x, mean, std) {
     return p;
 }
 
-// Helper function to get color gradient from green (0%) to red (50%)
+
 function getGradientColor(percent) {
-    // Clamp percent between 0 and 100
+    
     percent = Math.max(0, Math.min(100, percent));
     
-    // Hue goes from 120 (green) to 0 (red) on the HSL wheel, reaching red at 50%
+    
     const hue = Math.max(0, 120 - (percent / 18) * 120);
     return `hsl(${hue}, 100%, 50%)`;
 }
 
-const actualInput = document.getElementById('actualVitusInput');
-if (actualInput) {
-    actualInput.oninput = () => {
-        if (!currentStats) return;
+function formatRunDuration(totalSeconds) {
+    const duration = Math.max(0, Math.floor(totalSeconds || 0));
+    const hours = Math.floor(duration / 3600);
+    const minutes = Math.floor((duration % 3600) / 60);
+    const seconds = duration % 60;
 
-        const manualBox = document.getElementById('manualDroneInput');
-        let activeDroneCount = currentStats.droneKills;
-
-        if (manualBox && manualBox.value !== "") {
-            const val = parseInt(manualBox.value);
-            if (!isNaN(val) && val >= 0) {
-                activeDroneCount = val;
-            }
-        }
-
-        updateVitusTable(activeDroneCount, currentStats.rounds);
-    };
+    if (hours > 0) {
+        return `${hours}h ${minutes}m ${seconds}s`;
+    }
+    return `${minutes}m ${seconds}s`;
 }
 
-// --- NEW FEATURE: Saturation Threshold Logic ---
+function getActualVitusValue() {
+    if (!vitusPanelInput) return null;
+    const val = parseFloat(vitusPanelInput.value);
+    return isNaN(val) ? null : val;
+}
+
+function syncVitusInputs(sourceEl) {
+    if (syncingVitusInputs) return;
+    syncingVitusInputs = true;
+    const value = sourceEl ? sourceEl.value : "";
+    [vitusPanelInput, vitusKpiInput].forEach(input => {
+        if (input && input !== sourceEl) {
+            input.value = value;
+        }
+    });
+    syncingVitusInputs = false;
+}
+
+function updateVitusPerMinuteDisplay() {
+    if (vitusPerMinuteDetail) {
+        vitusPerMinuteDetail.textContent = "";
+    }
+
+    if (!vitusPerMinuteValue) return;
+
+    if (!currentRunDurationSeconds || currentRunDurationSeconds <= 0) {
+        vitusPerMinuteValue.textContent = "X/m";
+        return;
+    }
+
+    const actual = getActualVitusValue();
+    if (actual === null || actual < 0) {
+        vitusPerMinuteValue.textContent = "X/m";
+        return;
+    }
+
+    const minutes = currentRunDurationSeconds / 60;
+    if (!minutes || minutes <= 0) {
+        vitusPerMinuteValue.textContent = "X/m";
+        return;
+    }
+
+    const rate = actual / minutes;
+    vitusPerMinuteValue.textContent = `${rate.toFixed(2)}/m`;
+}
+
+function handleActualVitusInputChange(sourceEl) {
+    if (!sourceEl) return;
+    syncVitusInputs(sourceEl);
+    updateVitusPerMinuteDisplay();
+
+    if (!currentStats) return;
+
+    const manualBox = document.getElementById('manualDroneInput');
+    let activeDroneCount = currentStats.droneKills;
+
+    if (manualBox && manualBox.value !== "") {
+        const val = parseInt(manualBox.value);
+        if (!isNaN(val) && val >= 0) {
+            activeDroneCount = val;
+        }
+    }
+
+    updateVitusTable(activeDroneCount, currentStats.rounds);
+}
+
+if (vitusPanelInput) {
+    vitusPanelInput.addEventListener('input', () => handleActualVitusInputChange(vitusPanelInput));
+}
+
+if (vitusKpiInput) {
+    vitusKpiInput.addEventListener('input', () => handleActualVitusInputChange(vitusKpiInput));
+}
+
+updateVitusPerMinuteDisplay();
+
+
 function updateThresholdStat() {
     const thresholdResult = document.getElementById('thresholdResult');
 
-    // Safety Check
+    
     if (!currentSaturationSegments || currentSaturationSegments.length === 0) {
         if (thresholdResult) thresholdResult.textContent = "--%";
         return;
     }
 
-    // Always use 15 as the limit
+    
     const limit = 15;
 
-    // 3. Calculate % time above limit
+    
     let totalDur = 0;
     let aboveDur = 0;
 
@@ -1244,7 +1327,7 @@ function updateThresholdStat() {
         }
     }
 
-    // 4. Update Result
+    
     let pct = totalDur > 0 ? (aboveDur / totalDur * 100).toFixed(1) : "0.0";
 
     if (thresholdResult) {
