@@ -10,7 +10,7 @@
 * Loads a Warframe EE.log in the browser and scans it without loading the whole file into memory.
 * Finds relevant events (enemy spawns, drone kills, wave/reward times, and world state).
 * Produces easy-to-read stats: total enemies, drones, rounds, run duration, drones-per-minute, and a time-weighted "enemy saturation" breakdown.
-* Estimates expected Vitus (drops) using a simple probabilistic model.
+* Estimates expected Vitus yields using a simple probabilistic model.
 
 # 2) How the 50% expected Vitus is calculated
 
