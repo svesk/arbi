@@ -42,7 +42,7 @@ The expected Vitus is calculated using 4 variables:
 
 # 3) How the High Roll and Low Roll (Variance) are calculated
 
-To figure out exactly how lucky or unlucky a run is, we need the Standard Deviation. This is achieved by following these steps:
+To figure out exactly how lucky or unlucky a run is, we need the Standard Deviation. This is achieved by calculating these things:
 
 1. The variance of a single Vitus drop.
 2. The total variance of all drone drops combined (Double RNG).
@@ -77,11 +77,10 @@ By using standard Z-Scores (fixed statistical multipliers), we can find the exac
 
 Enemy saturation measures how "full" the map is during your run. The dashboard derives saturation from the EE.log's `MonitoredTicking` lines and time-weighted segments.
 
-The tool uses three inputs:
+The tool uses 2 inputs:
 
 1. `MonitoredTicking` lines (timestamped live enemy counts).
-2. The current simulation cap (read and stored from wave-cap lines, but not used in bucket math).
-3. Segment duration (time between consecutive `MonitoredTicking` lines).
+2. Segment duration (time between consecutive `MonitoredTicking` lines).
 
 **MonitoredTicking (Live Enemies):**
 The game regularly checks how many enemies are alive. The tool records each update and how long that enemy count lasted. If the game is paused (like between waves or during reward screens), those times are skipped so your stats only reflect active gameplay.
