@@ -60,6 +60,8 @@ async function processFile(file) {
         currentStats = stats;
         renderDashboard(stats);
 
+        document.getElementById('uploadRunBtn').classList.remove('hidden');
+
         dashboard.classList.remove('hidden');
         spinner.style.display = 'none';
         statusDiv.textContent = "";
@@ -902,108 +904,76 @@ function updateVitusTable(droneCount, rounds) {
     }
 }
 
+function compileRunMetrics(stats) {
+    if (!stats) return null;
 
-function generateReportString(stats) {
-    if (!stats) return "No analysis data available.";
-
-    let lines = [];
-
-    lines.push(`Mission: ${stats.missionName}`);
-
-    if (stats.isDefense) {
-        const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(m => stats.missionName.toLowerCase().includes(m.toLowerCase()));
-        const wavesPerRotation = isMirrorNode ? 2 : 3;
-        lines.push(`Waves:   ${stats.rounds * wavesPerRotation} (${stats.rounds} Rotations)`);
-    } else {
-        lines.push(`Rounds:  ${stats.rounds}`);
-    }
-
-    
     const manualInput = document.getElementById('manualDroneInput');
-    let droneCount = stats.droneKills;
-    if (manualInput && manualInput.value) {
+    let droneKills = stats.droneKills;
+    if (manualInput && manualInput.value !== "") {
         let val = parseInt(manualInput.value);
-        if (!isNaN(val) && val >= 0) droneCount = val;
+        if (!isNaN(val) && val >= 0) droneKills = val;
     }
-    lines.push(`Drones:  ${droneCount}`);
+    const totalEnemies = stats.enemySpawns + droneKills;
 
-    const totalEnemies = stats.enemySpawns + stats.droneKills;
-    lines.push(`Total Enemies: ${totalEnemies}`);
-
-    const ratio = droneCount > 0 ? (totalEnemies / droneCount).toFixed(2) : "0.00";
-    lines.push(`Enemies/Drone: ${ratio}`);
-
+    const actualVitus = getActualVitusValue();
     const rotations = stats.rounds;
     const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(m => stats.missionName.toLowerCase().includes(m.toLowerCase()));
     const wavesPerRotation = isMirrorNode ? 2 : 3;
-    const rotTotalMean = rotations + (rotations * 0.10 * wavesPerRotation);
-    const meanDrops = droneCount * 0.15;
-    const meanVal = (4 * 0.18) + (2 * (1 - 0.18));
-    const grandMean = rotTotalMean + (meanDrops * meanVal);
-    lines.push(`Expected Vitus (50%): ${Math.round(grandMean)}`);
 
+    const rotTotalMean = rotations + (rotations * 0.10 * wavesPerRotation);
+    const rotVar = rotations * 0.10 * (1 - 0.10) * Math.pow(wavesPerRotation, 2);
+    const p = DROP_CHANCE;
+    const meanDrops = droneKills * p;
+    const meanVal = (4 * RETRIEVER_CHANCE) + (2 * (1 - RETRIEVER_CHANCE));
+    const expectValSq = (16 * RETRIEVER_CHANCE) + (4 * (1 - RETRIEVER_CHANCE));
+    const varVal = expectValSq - Math.pow(meanVal, 2);
+    const varDrops = droneKills * p * (1 - p);
+    const totalDroneVar = (meanDrops * varVal) + (Math.pow(meanVal, 2) * varDrops);
+    const grandMean = rotTotalMean + (meanDrops * meanVal);
+    const grandStd = Math.sqrt(rotVar + totalDroneVar);
+
+    let luckPercentile = null;
+    if (actualVitus !== null && actualVitus >= 0 && grandStd > 0) {
+        luckPercentile = getNormalCDF(actualVitus, grandMean, grandStd);
+    }
+
+    let avgDroneInterval = null;
     if (stats.droneTimestamps.length > 1) {
         let intervals = [];
         for (let i = 1; i < stats.droneTimestamps.length; i++) {
             intervals.push(stats.droneTimestamps[i] - stats.droneTimestamps[i - 1]);
         }
-        const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-        lines.push(`Avg. Drone Interval:  ${avg.toFixed(2)}s`);
-    } else {
-        lines.push(`Avg. Drone Interval:  N/A`);
+        avgDroneInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
     }
 
-    lines.push("");
-    lines.push("--- Enemy Saturation ---");
-
-    
-    const STEP = 3;
-    const MAX_VAL = 30; 
+    let satPct = 0;
+    let saturationBuckets = {};
+    const STEP = 3, MAX_VAL = 30;
     const NUM_BUCKETS = Math.ceil(MAX_VAL / STEP);
 
     if (currentSaturationSegments && currentSaturationSegments.length > 0) {
+        let totalDur = 0, aboveDur = 0;
         let buckets = new Array(NUM_BUCKETS).fill(0);
-        let totalDur = 0;
 
         for (let seg of currentSaturationSegments) {
-            let idx = Math.floor(seg.val / STEP);
-            if (idx >= NUM_BUCKETS - 1) idx = NUM_BUCKETS - 1; 
-            buckets[idx] += seg.dur;
             totalDur += seg.dur;
-        }
-
-        for (let i = 0; i < NUM_BUCKETS; i++) {
-            const start = i * STEP;
-            const end = (i * STEP) + (STEP - 1);
-            const label = (i === NUM_BUCKETS - 1) ? `${start}+` : `${start}-${end}`;
-            const pct = totalDur > 0 ? (buckets[i] / totalDur * 100).toFixed(1) : "0.0";
-            lines.push(`${label.padEnd(8)} : ${pct.padStart(5)}%`);
-        }
-
-    } else if (stats.liveCounts && stats.liveCounts.length > 0) {
-        
-        let buckets = new Array(NUM_BUCKETS).fill(0);
-        stats.liveCounts.forEach(c => {
-            let idx = Math.floor(c / STEP);
+            if (seg.val >= 15) aboveDur += seg.dur;
+            let idx = Math.floor(seg.val / STEP);
             if (idx >= NUM_BUCKETS - 1) idx = NUM_BUCKETS - 1;
-            buckets[idx]++;
-        });
-        let total = stats.liveCounts.length;
+            buckets[idx] += seg.dur;
+        }
+        satPct = totalDur > 0 ? parseFloat((aboveDur / totalDur * 100).toFixed(1)) : 0;
+
         for (let i = 0; i < NUM_BUCKETS; i++) {
             const start = i * STEP;
             const end = (i * STEP) + (STEP - 1);
             const label = (i === NUM_BUCKETS - 1) ? `${start}+` : `${start}-${end}`;
-            const pct = total > 0 ? (buckets[i] / total * 100).toFixed(1) : "0.0";
-            lines.push(`${label.padEnd(8)} : ${pct.padStart(5)}%`);
+            const pct = totalDur > 0 ? parseFloat((buckets[i] / totalDur * 100).toFixed(1)) : 0.0;
+            saturationBuckets[label] = pct;
         }
-
-    } else {
-        lines.push("No live enemy count data found.");
     }
 
-    lines.push("");
-    lines.push("--- Drones Per Rotation ---");
-
+    let dronesPerRotation = [];
     if (stats.rewardTimestamps && stats.rewardTimestamps.length > 0) {
         let droneIdx = 0;
         for (let r = 0; r < stats.rewardTimestamps.length; r++) {
@@ -1013,8 +983,82 @@ function generateReportString(stats) {
                 count++;
                 droneIdx++;
             }
-            lines.push(`Rotation ${r + 1}: ${count}`);
+            dronesPerRotation.push(count);
         }
+    }
+
+    return {
+        missionName: stats.missionName,
+        isDefense: stats.isDefense,
+        roundsCompleted: stats.rounds,
+        droneKills: droneKills,
+        totalEnemies: totalEnemies,
+        durationSeconds: parseFloat(currentRunDurationSeconds.toFixed(2)),
+        actualVitus: actualVitus,
+        expectedVitus: Math.round(grandMean),
+        luckPercentile: luckPercentile,
+        avgDroneInterval: avgDroneInterval ? parseFloat(avgDroneInterval.toFixed(2)) : null,
+        thresholdSaturationPercent: satPct,
+        saturationBuckets: saturationBuckets,
+        dronesPerRotation: dronesPerRotation
+    };
+}
+
+
+function generateReportString(stats) {
+    const m = compileRunMetrics(stats);
+    if (!m) return "No analysis data available.";
+
+    let lines = [];
+    lines.push(`Mission: ${m.missionName}`);
+
+    if (m.isDefense) {
+        const isMirrorNode = Array.isArray(MIRROR_DEFENSE_MAPS) && MIRROR_DEFENSE_MAPS.some(map => m.missionName.toLowerCase().includes(map.toLowerCase()));
+        const wavesPerRotation = isMirrorNode ? 2 : 3;
+        lines.push(`Waves:   ${m.roundsCompleted * wavesPerRotation} (${m.roundsCompleted} Rotations)`);
+    } else {
+        lines.push(`Rounds:  ${m.roundsCompleted}`);
+    }
+
+    lines.push(`Drones:  ${m.droneKills}`);
+    lines.push(`Total Enemies: ${m.totalEnemies}`);
+    const ratio = m.droneKills > 0 ? (m.totalEnemies / m.droneKills).toFixed(2) : "0.00";
+    lines.push(`Enemies/Drone: ${ratio}`);
+
+    if (m.actualVitus !== null && m.actualVitus >= 0) lines.push(`Actual Vitus: ${m.actualVitus}`);
+    lines.push(`Expected Vitus (50%): ${m.expectedVitus}`);
+
+    if (m.luckPercentile !== null) {
+        const percentage = (m.luckPercentile * 100).toFixed(1);
+        let text = "Average";
+        if (m.luckPercentile >= 0.99) text = "GOD ROLL";
+        else if (m.luckPercentile >= 0.90) text = "High Roll";
+        else if (m.luckPercentile >= 0.75) text = "Above Avg";
+        else if (m.luckPercentile > 0.25) text = "Average";
+        else if (m.luckPercentile > 0.10) text = "Below Avg";
+        else if (m.luckPercentile > 0.01) text = "Unlucky";
+        else text = "WORST CASE";
+
+        const displayPercent = m.luckPercentile > 0.5 ? `Top ${(100 - percentage).toFixed(1)}%` : `Bottom ${percentage}%`;
+        lines.push(`Luck: ${text} (${displayPercent})`);
+    }
+
+    lines.push(`Avg. Drone Interval:  ${m.avgDroneInterval !== null ? m.avgDroneInterval + 's' : 'N/A'}`);
+
+    lines.push("");
+    lines.push("--- Enemy Saturation ---");
+    if (Object.keys(m.saturationBuckets).length > 0) {
+        for (const [label, pct] of Object.entries(m.saturationBuckets)) {
+            lines.push(`${label.padEnd(8)} : ${pct.toString().padStart(5)}%`);
+        }
+    } else {
+        lines.push("No live enemy count data found.");
+    }
+
+    lines.push("");
+    lines.push("--- Drones Per Rotation ---");
+    if (m.dronesPerRotation.length > 0) {
+        m.dronesPerRotation.forEach((count, i) => lines.push(`Rotation ${i + 1}: ${count}`));
     } else {
         lines.push("No rotation data available.");
     }
@@ -1338,3 +1382,90 @@ function updateThresholdStat() {
         thresholdResult.style.color = getGradientColor(parseFloat(pct));
     }
 }
+
+const uploadModal = document.getElementById('uploadModal');
+const uploadRunBtn = document.getElementById('uploadRunBtn');
+const cancelUploadBtn = document.getElementById('cancelUploadBtn');
+const confirmUploadBtn = document.getElementById('confirmUploadBtn');
+
+uploadRunBtn.onclick = () => {
+    const currentVitus = getActualVitusValue();
+    document.getElementById('uploadActualVitus').value = currentVitus !== null ? currentVitus : "";
+    
+    uploadModal.style.display = 'flex';
+};
+
+cancelUploadBtn.onclick = () => {
+    uploadModal.style.display = 'none';
+};
+
+confirmUploadBtn.onclick = async () => {
+    const vitusInputStr = document.getElementById('uploadActualVitus').value.trim();
+    if (!vitusInputStr) {
+        alert("Please enter your Actual Vitus amount. This is required to upload a run!");
+        return; 
+    }
+    
+    const finalActualVitus = parseInt(vitusInputStr);
+    if (isNaN(finalActualVitus) || finalActualVitus < 0) {
+        alert("Actual Vitus must be a valid positive number.");
+        return; 
+    }
+
+    const alias = document.getElementById('uploadAlias').value.trim() || "Anonymous";
+    const notes = document.getElementById('uploadNotes').value.trim() || "";
+
+    const dashboardInput = document.getElementById('actualVitusInput');
+    if (dashboardInput) {
+        dashboardInput.value = finalActualVitus;
+        handleActualVitusInputChange(dashboardInput); 
+    }
+
+    const metrics = compileRunMetrics(currentStats);
+
+    const payload = {
+        playerAlias: alias,
+        notes: notes,
+        ...metrics,
+        actualVitus: finalActualVitus 
+    };
+
+    confirmUploadBtn.innerHTML = "⏳ Sending...";
+    
+    try {
+        const betaSecret = localStorage.getItem("arbi_beta_secret");
+
+        const response = await fetch("https://arbi-backend.svesk.workers.dev", { 
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": betaSecret ? `Bearer ${betaSecret}` : "" 
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            uploadModal.style.display = 'none';
+            confirmUploadBtn.innerHTML = "Submit"; 
+            
+            uploadRunBtn.innerHTML = "✅ Uploaded!";
+            uploadRunBtn.style.background = "var(--success)";
+            uploadRunBtn.style.pointerEvents = "none"; 
+        } else {
+            alert("Upload failed: " + result.error);
+            confirmUploadBtn.innerHTML = "Submit";
+        }
+    } catch (error) {
+        console.error("Network Error:", error);
+        alert("Failed to connect to the database. Check your internet connection!");
+        confirmUploadBtn.innerHTML = "Submit";
+    }
+};
+
+uploadModal.onclick = (e) => {
+    if (e.target === uploadModal) {
+        uploadModal.style.display = 'none';
+    }
+};

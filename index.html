@@ -202,12 +202,38 @@
                     <button class="btn" onclick="copyToClipboard()" style="background-color: #00e676; color: #121212;">
                         Copy Image
                     </button>
+                    <button class="btn hidden" id="uploadRunBtn" style="background-color: #00e5ff; color: #121212;">
+                        ☁️ Upload Run
+                    </button>
                     <button class="btn" id="downloadBtn">Download Text Report</button>
                     <button class="btn" style="background:#444; color:white;" onclick="location.reload()">Reset</button>
                 </div>
                 <div style="height: 50px;"></div>
             </div>
 
+        </div>
+    </div>
+
+    <div id="uploadModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center;">
+        <div style="background: var(--bg-panel); padding: 30px; border-radius: 12px; border: 1px solid #333; width: 500px; min-height: 450px; text-align: left; box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start;">
+            <h3 style="margin-top: 0; margin-bottom: 0; color: var(--primary);">Upload Run Data</h3>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px;">
+                The EE.log file is <b>never</b> uploaded, only the extracted metrics you see on the dashboard. This helps us build a public database and gather info on how different factors affect Vitus drops.
+            </p>
+
+            <label style="color: #bbb; font-size: 0.8rem; text-transform: uppercase; font-weight: bold; margin-top: 30px;">Actual Vitus <span style="color: #ff5252;">*</span></label>
+            <input type="number" id="uploadActualVitus" placeholder="e.g. 527" required min="0" style="width: 100%; box-sizing: border-box; background: #121212; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; margin-bottom: 15px; margin-top: 5px;">
+
+            <label style="color: #bbb; font-size: 0.8rem; text-transform: uppercase; font-weight: bold;">Run Alias (Optional)</label>
+            <input type="text" id="uploadAlias" placeholder="e.g. sves" style="width: 100%; box-sizing: border-box; background: #121212; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; margin-bottom: 15px; margin-top: 5px;">
+
+            <label style="color: #bbb; font-size: 0.8rem; text-transform: uppercase; font-weight: bold;">Build / Notes (Optional)</label>
+            <input type="text" id="uploadNotes" placeholder="e.g. 2x Cyte + Citrine" style="width: 100%; box-sizing: border-box; background: #121212; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; margin-bottom: 25px; margin-top: 5px;">
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end; align-self: flex-end;">
+                <button id="cancelUploadBtn" class="btn" style="background: #444; color: #fff; margin-top: 0; padding: 8px 16px;">Cancel</button>
+                <button id="confirmUploadBtn" class="btn" style="background: #00e5ff; color: #121212; margin-top: 0; padding: 8px 16px;">Submit</button>
+            </div>
         </div>
     </div>
     <script src="script.js?v=6"></script>
