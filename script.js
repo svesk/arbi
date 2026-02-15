@@ -1433,13 +1433,11 @@ confirmUploadBtn.onclick = async () => {
     confirmUploadBtn.innerHTML = "⏳ Sending...";
     
     try {
-        const betaSecret = localStorage.getItem("arbi_beta_secret");
 
         const response = await fetch("https://arbi-backend.svesk.workers.dev", { 
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": betaSecret ? `Bearer ${betaSecret}` : "" 
             },
             body: JSON.stringify(payload)
         });

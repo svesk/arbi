@@ -42,10 +42,6 @@ export default {
         }
 
         try {
-            const clientSecret = request.headers.get("Authorization");
-            if (clientSecret !== `Bearer ${env.UPLOAD_SECRET}`) {
-                return new Response(JSON.stringify({ error: "Unauthorized. Beta access only." }), { status: 401, headers: corsHeaders });
-            }
 
             const data = await request.json();
 
